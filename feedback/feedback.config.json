@@ -24,6 +24,9 @@
     "nl_saturation_ratio":  { "atol": 0.0,    "rtol": 0.08 },
     "nl_converged":         { "atol": 0.0,    "rtol": 0.0  },
     "nl_airgap_ratio":      { "atol": 0.05,   "rtol": 0.0  },
-    "nl_fallback_resid":    { "atol": 1e-5,   "rtol": 0.0  }
+    "nl_fallback_resid":    { "atol": 1e-5,   "rtol": 0.0  },
+
+    "coreloss_total_W":     { "atol": 0.05,   "rtol": 0.10 },
+    "coreloss_scaling_ok":  { "atol": 0.0,    "rtol": 0.0  }
   }
 }

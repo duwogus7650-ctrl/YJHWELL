@@ -39,8 +39,10 @@ Stack: Python 3.12 · PyQt6 · numpy/scipy · shapely · triangle · pyqtgraph.
   - **cogging torque** (Maxwell stress over an air-gap band)
   - **load torque** under synchronised 3-phase current
   - **back-EMF** — per-phase flux linkage `λ(θ)` → `e = −dλ/dt`
-- **Results** — field overlay (Mag_B), Torque / Back-EMF / Load-Torque plots,
-  Optimetrics parametric sweep, CSV export.
+  - **core loss** — Steinmetz/Bertotti iron loss (hysteresis/eddy/excess)
+  - **transient** — constant-speed time-domain back-EMF waveforms (vs time)
+- **Results** — field overlay (Mag_B), Torque / Back-EMF / Load-Torque /
+  Transient-EMF / Core-Loss, Optimetrics parametric sweep, CSV export.
 
 ## Design-agnostic
 
