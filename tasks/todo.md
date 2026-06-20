@@ -44,9 +44,13 @@
 - [ ] v1 잔여: Fillet(모서리 라운딩)
 - [ ] BP(철손) 곡선 편집 연결
 - [x] v2 해석조건: Assign Excitation(Current)/Boundary(Vector Potential)/Band(Motion)/Mesh Operation/Solve Setup → Project Manager 트리 채움 (uniq_v2/u_0043)
-- [x] v2 해석조건: Assign Excitation(Current)/Boundary(Vector Potential)/Band(Motion)/Mesh Operation/Solve Setup → Project Manager 트리 채움 (uniq_v2/u_0043)
-- [ ] 솔버: 2D 자기 FEM(B) → 토크·Back-EMF
-- [ ] v3: Report 플롯/Field Overlay/Optimetrics/CSV
+- [x] 솔버: 2D 자기 magnetostatic FEM(B) → 코깅토크 + Field Overlay (eafc/e6df/d4e 커밋)
+- [x] **솔버 #1 Back-EMF**: 권선함수(cos 투영) 자속쇄교 λ(θ) → e=-dλ/dt 3상. feedback-runner 검증(자기일관성 0.995/평형/영합)
+- [x] **솔버 #3 부하토크**: 3상 전류 회전동기 주입 + Maxwell 응력. dq 교차일치 0.89 + 전류 선형성 2.04로 검증
+- [x] **솔버 #2 비선형 BH**: fixed-point ν(B) (relax 0.3, RMS 수렴, 8/10/14극 강건) + 선형 폴백 항등. 포화비 0.79
+- [x] **UI**: Results 탭에 Back-EMF/Load Torque 버튼 + 3상 멀티트레이스 플롯(InducedVoltage A/B/C)
+- [x] **검증 하니스**: feedback/ (solve_case.py + oracle + config). 설계무관 물리 oracle vs 회귀 베이스라인 분리. 8/10/14극·속도가변 전부 통과, 열화설계는 게이트가 차단
+- [ ] v3: Transient(시간스텝)/Optimetrics에 Back-EMF·부하토크 연동, CSV 확장
 
 ## (구) 전체 로드맵 (단계적 MVP)
 - [ ] **1단계 (현재): 형상편집 + 재질 + 메시** ← 진행 중

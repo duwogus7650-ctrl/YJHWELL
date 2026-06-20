@@ -1,0 +1,29 @@
+{
+  "run": ".venv\\Scripts\\python.exe feedback/solve_case.py --out feedback/out",
+  "cwd": ".",
+  "outputs_dir": "feedback/out",
+  "results_file": "feedback/out/results.json",
+  "oracle_file": "feedback/oracle.json",
+  "timeout_s": 300,
+  "tolerances": {
+    "default":        { "atol": 0.0,   "rtol": 0.02 },
+
+    "airgap_B_mean":  { "atol": 0.02,  "rtol": 0.03 },
+    "airgap_B_max":   { "atol": 0.03,  "rtol": 0.05 },
+    "Bmax":           { "atol": 0.05,  "rtol": 0.05 },
+    "cogging_pk2pk":  { "atol": 0.01,  "rtol": 0.15 },
+    "emf_peak_V":     { "atol": 0.05,  "rtol": 0.05 },
+    "load_torque_avg_Nm": { "atol": 0.02, "rtol": 0.10 },
+
+    "emf_balance":          { "atol": 0.08, "rtol": 0.0 },
+    "emf_consistency":      { "atol": 0.0,  "rtol": 0.06 },
+    "emf_zero_sum":         { "atol": 0.02, "rtol": 0.0 },
+    "load_torque_dq_ratio": { "atol": 0.0,  "rtol": 0.25 },
+    "load_torque_scaling":  { "atol": 0.0,  "rtol": 0.10 },
+
+    "nl_saturation_ratio":  { "atol": 0.0,    "rtol": 0.08 },
+    "nl_converged":         { "atol": 0.0,    "rtol": 0.0  },
+    "nl_airgap_ratio":      { "atol": 0.05,   "rtol": 0.0  },
+    "nl_fallback_resid":    { "atol": 1e-5,   "rtol": 0.0  }
+  }
+}

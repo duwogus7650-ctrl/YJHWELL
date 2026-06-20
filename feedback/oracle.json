@@ -1,0 +1,18 @@
+{
+  "airgap_B_mean": 0.69371,
+  "airgap_B_max": 1.06294,
+  "Bmax": 1.86159,
+  "cogging_pk2pk": 0.046852,
+  "emf_peak_V": 4.1786,
+  "load_torque_avg_Nm": 0.1617,
+  "nl_saturation_ratio": 0.7927,
+
+  "emf_balance": 1.0,
+  "emf_consistency": 1.0,
+  "emf_zero_sum": 0.0,
+  "load_torque_dq_ratio": 1.0,
+  "load_torque_scaling": 2.0,
+  "nl_converged": 1.0,
+  "nl_airgap_ratio": 1.0,
+  "nl_fallback_resid": 0.0
+}

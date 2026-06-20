@@ -1,0 +1,11 @@
+# YJHWell — pinned dependencies (offline-reproducible, Python 3.12)
+# Install into a venv:  py -3.12 -m venv .venv && .venv\Scripts\python -m pip install -r requirements.txt
+numpy==2.4.6
+scipy==1.18.0
+shapely==2.1.2
+triangle==20250106
+pyqtgraph==0.14.0
+pillow==12.2.0
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.1
+PyQt6_sip==13.11.1

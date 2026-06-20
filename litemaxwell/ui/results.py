@@ -13,10 +13,15 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 class ResultPlotDialog(QDialog):
     """Rectangular plot (x vs y) with peak-to-peak readout and CSV export."""
 
-    def __init__(self, x, y, xlabel, ylabel, title, parent=None):
+    def __init__(self, x, y, xlabel, ylabel, title, parent=None, series=None):
         super().__init__(parent)
-        self.x = np.asarray(x, float); self.y = np.asarray(y, float)
+        self.x = np.asarray(x, float)
         self.xlabel, self.ylabel = xlabel, ylabel
+        # series: optional [(label, y_array), ...] for multi-trace (e.g. 3-phase
+        # back-EMF). When given, it overrides the single y curve.
+        self.series = [(lab, np.asarray(yy, float)) for lab, yy in (series or [])]
+        if not self.series:
+            self.series = [(ylabel, np.asarray(y, float))]
         self.setWindowTitle(title)
         self.resize(720, 460)
         root = QVBoxLayout(self)
@@ -26,12 +31,20 @@ class ResultPlotDialog(QDialog):
         plot.setLabel("bottom", xlabel, color="#9fb3c8")
         plot.setLabel("left", ylabel, color="#9fb3c8")
         plot.showGrid(x=True, y=True, alpha=0.25)
-        plot.plot(self.x, self.y, pen=pg.mkPen("#2bd6ff", width=2),
-                  symbol="o", symbolSize=5, symbolBrush="#e6a23c")
+        colors = ["#2bd6ff", "#e6a23c", "#7ee081", "#ff6b6b"]
+        multi = len(self.series) > 1
+        if multi:
+            plot.addLegend(labelTextColor="#9fb3c8")
+        for i, (lab, yy) in enumerate(self.series):
+            kw = dict(pen=pg.mkPen(colors[i % len(colors)], width=2), name=lab)
+            if not multi:
+                kw.update(symbol="o", symbolSize=5, symbolBrush="#e6a23c")
+            plot.plot(self.x, yy, **kw)
         root.addWidget(plot, 1)
-        pk = float(self.y.max() - self.y.min())
-        info = QLabel(f"pk-pk = {pk:.4g}    mean = {float(self.y.mean()):.4g}    "
-                     f"max = {float(self.y.max()):.4g}    min = {float(self.y.min()):.4g}")
+        y0 = self.series[0][1]
+        pk = float(max(yy.max() - yy.min() for _, yy in self.series))
+        info = QLabel(f"pk-pk = {pk:.4g}    mean = {float(y0.mean()):.4g}    "
+                     f"max = {float(y0.max()):.4g}    min = {float(y0.min()):.4g}")
         root.addWidget(info)
         row = QHBoxLayout()
         exp = QPushButton("Export CSV…"); exp.clicked.connect(self._export)
@@ -44,8 +57,10 @@ class ResultPlotDialog(QDialog):
         fn, _ = QFileDialog.getSaveFileName(self, "Export CSV", "result.csv",
                                             "CSV (*.csv)")
         if fn:
-            np.savetxt(fn, np.column_stack([self.x, self.y]), delimiter=",",
-                       header=f"{self.xlabel},{self.ylabel}", comments="")
+            cols = [self.x] + [yy for _, yy in self.series]
+            header = ",".join([self.xlabel] + [lab for lab, _ in self.series])
+            np.savetxt(fn, np.column_stack(cols), delimiter=",",
+                       header=header, comments="")
 
 
 class OptimetricsDialog(QDialog):

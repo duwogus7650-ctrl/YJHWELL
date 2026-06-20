@@ -344,12 +344,16 @@ class MainWindow(QMainWindow):
         g = t.add_group("Analysis")
         g.add_button("Solve Setup", self.edit_solve_setup, icon="new")
         g.add_button("Analyze", self.do_analyze, icon="analyze")
+        self.btn_nl = g.add_button("Nonlinear (BH)", lambda: None,
+                                   checkable=True, icon="mesh")
         t.finish()
 
         # Results / Automation (placeholders for later stages)
         t = self.ribbon.add_tab("Results")
         g = t.add_group("Create Report")
         g.add_button("Torque Plot", self.do_torque_plot, icon="report")
+        g.add_button("Back-EMF", self.do_backemf_plot, icon="report")
+        g.add_button("Load Torque", self.do_load_torque_plot, icon="report")
         self.btn_field = g.add_button("Field Overlay", self.toggle_field,
                                       checkable=True, icon="mesh")
         g = t.add_group("Optimetrics")
@@ -1137,14 +1141,16 @@ class MainWindow(QMainWindow):
         try:
             t0 = time.perf_counter()
             npole = int(self.project.variables.value("N_pole", 10))
+            nl = bool(getattr(self, "btn_nl", None) and self.btn_nl.isChecked())
             field = solve_magnetostatic(
                 self.design.mesh, self.design.shapes, self.project.materials,
-                self.design.excitations, n_pole=npole)
+                self.design.excitations, n_pole=npole, nonlinear=nl)
             self.design.field = field
             self.view.set_field(field)
             self.btn_field.setChecked(True)
             dt = (time.perf_counter() - t0) * 1e3
-            self.log(f"Analyzed (magnetostatic): Bmax = {field.bmax:.3f} T  "
+            mode = f"nonlinear, {field.iters} it" if nl else "linear"
+            self.log(f"Analyzed (magnetostatic, {mode}): Bmax = {field.bmax:.3f} T  "
                      f"({dt:.0f} ms)")
             self.ribbon.setCurrentIndex(5)        # Results tab
             self.refresh_trees()
@@ -1213,6 +1219,78 @@ class MainWindow(QMainWindow):
                  f"N·m (무여자 코깅 토크; 권선 전류 인가 시 평균토크 발생)")
         ResultPlotDialog(ang, tq, "Rotor position [deg]", "Torque [N·m]",
                          "Torque Plot 1", self).exec()
+
+    def do_backemf_plot(self):
+        """No-load back-EMF (3-phase) vs rotor position -> Winding Plot."""
+        from PyQt6.QtWidgets import QApplication
+        from ..model.solver import backemf_sweep
+        from .results import ResultPlotDialog
+        v = self.project.variables
+        npole = int(v.value("N_pole", 10))
+        Lstk = v.value("L_stk", 28.0) * 1e-3
+        turns = int(v.value("Zc", 14))
+        rpm = v.value("BaseRPM", 3000.0)
+
+        def prog(i, n):
+            self.statusBar().showMessage(f"Back-EMF sweep… {i}/{n}")
+            QApplication.processEvents()
+
+        self.log("무부하 Back-EMF 계산 중… (자속쇄교 λ → e = -dλ/dt)")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            ang, emf, _ = backemf_sweep(self.design.shapes, self.project.materials,
+                                        n_pole=npole, n_steps=37, L_stk_m=Lstk,
+                                        turns=turns, base_rpm=rpm, mesh_area=10.0,
+                                        progress=prog)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Back-EMF error", str(e)); return
+        QApplication.restoreOverrideCursor()
+        self.statusBar().clearMessage()
+        pk = max(float(abs(emf[p]).max()) for p in "ABC")
+        self.log(f"Back-EMF: peak ≈ {pk:.3g} V @ {rpm:g} rpm (PhaseA/B/C)")
+        series = [("InducedVoltage(PhaseA)", emf["A"]),
+                  ("InducedVoltage(PhaseB)", emf["B"]),
+                  ("InducedVoltage(PhaseC)", emf["C"])]
+        ResultPlotDialog(ang, emf["A"], "Rotor position [deg]",
+                         "Induced voltage [V]", "Winding Plot 1 (Back-EMF)",
+                         self, series=series).exec()
+
+    def do_load_torque_plot(self):
+        """Load torque under rated 3-phase current (q-axis) vs rotor position."""
+        from PyQt6.QtWidgets import QApplication
+        from ..model.solver import load_torque_sweep
+        from .results import ResultPlotDialog
+        v = self.project.variables
+        npole = int(v.value("N_pole", 10))
+        Lstk = v.value("L_stk", 28.0) * 1e-3
+        turns = int(v.value("Zc", 14))
+        rpm = v.value("BaseRPM", 3000.0)
+        ipk = v.value("I_rms", 8.2) * (2 ** 0.5)
+        rgap = self._estimate_gap_mm()
+
+        def prog(i, n):
+            self.statusBar().showMessage(f"Load-torque sweep… {i}/{n}")
+            QApplication.processEvents()
+
+        self.log("부하 토크 계산 중… (3상 전류 인가, 회전 동기 γ=90°)")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            ang, tq = load_torque_sweep(self.design.shapes, self.project.materials,
+                                        n_pole=npole, n_steps=19, L_stk_m=Lstk,
+                                        r_gap_mm=rgap, turns=turns, i_peak=ipk,
+                                        gamma_deg=90.0, base_rpm=rpm,
+                                        mesh_area=12.0, progress=prog)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Load torque error", str(e)); return
+        QApplication.restoreOverrideCursor()
+        self.statusBar().clearMessage()
+        avg = float(tq.mean()); rip = float(tq.max() - tq.min())
+        self.log(f"Load Torque: avg ≈ {avg:.3g} N·m, ripple = {rip:.3g} N·m "
+                 f"(I_pk={ipk:.3g} A, q축 γ=90°)")
+        ResultPlotDialog(ang, tq, "Rotor position [deg]", "Torque [N·m]",
+                         "Load Torque Plot", self).exec()
 
     def do_optimetrics(self):
         """Parametric sweep over one design variable -> metric table + CSV."""
