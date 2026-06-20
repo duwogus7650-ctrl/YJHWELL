@@ -14,6 +14,15 @@ from PyQt6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPathItem)
 
 from ..model.geometry import Shape
 
+def _jet(t: float) -> QColor:
+    """Jet-style colormap (blue->cyan->green->yellow->red) for t in [0,1]."""
+    t = 0.0 if t < 0 else 1.0 if t > 1 else t
+    r = max(0.0, min(1.0, 1.5 - abs(4 * t - 3)))
+    g = max(0.0, min(1.0, 1.5 - abs(4 * t - 2)))
+    b = max(0.0, min(1.0, 1.5 - abs(4 * t - 1)))
+    return QColor(int(r * 255), int(g * 255), int(b * 255))
+
+
 CANVAS_BG = QColor("#0a1422")          # tech deep-navy
 GRID = QColor("#12283f")
 GRID_MAJOR = QColor("#1c4869")
@@ -110,6 +119,8 @@ class ModelerView(QGraphicsView):
         self._preview = None
         self.mesh = None
         self.show_mesh = False
+        self.field = None
+        self.show_field = False
         self.snap = False
         self._osnap = True                 # object snap to existing vertices
         self._snap_marker = None           # (x, y) of active snap, for the marker
@@ -265,6 +276,11 @@ class ModelerView(QGraphicsView):
     def set_mesh(self, mesh) -> None:
         self.mesh = mesh
         self.show_mesh = mesh is not None
+        self.viewport().update()
+
+    def set_field(self, field) -> None:
+        self.field = field
+        self.show_field = field is not None
         self.viewport().update()
 
     # --- mouse / zoom ----------------------------------------------------
@@ -684,6 +700,17 @@ class ModelerView(QGraphicsView):
 
     def drawForeground(self, painter: QPainter, rect: QRectF):
         super().drawForeground(painter, rect)
+        # B-field overlay — fill each triangle by |B| (jet colormap)
+        if self.show_field and self.field is not None:
+            f = self.field
+            bmax = f.bmax or 1.0
+            nodes = f.nodes
+            painter.setPen(Qt.PenStyle.NoPen)
+            for k, (a, b, c) in enumerate(f.triangles):
+                t = min(f.Bmag[k] / bmax, 1.0)
+                painter.setBrush(QBrush(_jet(t)))
+                painter.drawPolygon(QPolygonF([
+                    QPointF(*nodes[a]), QPointF(*nodes[b]), QPointF(*nodes[c])]))
         # snap marker — triangle=close, square=vertex, cross=grid
         if self._snap_marker is not None:
             mx, my, kind = self._snap_marker

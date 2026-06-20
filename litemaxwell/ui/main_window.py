@@ -343,14 +343,15 @@ class MainWindow(QMainWindow):
                                          checkable=True, icon="showmesh")
         g = t.add_group("Analysis")
         g.add_button("Solve Setup", self.edit_solve_setup, icon="new")
-        g.add_button("Analyze", self._todo, icon="analyze")
+        g.add_button("Analyze", self.do_analyze, icon="analyze")
         t.finish()
 
         # Results / Automation (placeholders for later stages)
         t = self.ribbon.add_tab("Results")
         g = t.add_group("Create Report")
         g.add_button("Rect Plot", self._todo, icon="report")
-        g.add_button("Field Overlay", self._todo, icon="mesh")
+        self.btn_field = g.add_button("Field Overlay", self.toggle_field,
+                                      checkable=True, icon="mesh")
         t.finish()
         t = self.ribbon.add_tab("Automation")
         g = t.add_group("Scripting")
@@ -518,6 +519,9 @@ class MainWindow(QMainWindow):
                 si = QTreeWidgetItem([des.setup["name"]])
                 si.setData(0, Qt.ItemDataRole.UserRole, ("setup", None))
                 it.addChild(si)
+            elif node == "Field Overlays" and des.field is not None:
+                b = QTreeWidgetItem([f"B  (Mag_B, max {des.field.bmax:.3f} T)"])
+                it.addChild(b)
         defs = QTreeWidgetItem(["Definitions"]); root.addChild(defs)
         for name in self.project.materials:
             mi = QTreeWidgetItem([name])
@@ -1120,6 +1124,39 @@ class MainWindow(QMainWindow):
             self.design.mesh_ops.append(d)
             self.log(f"Mesh op '{d['name']}' max len {d['max_length']} mm")
             self.refresh_trees()
+
+    def do_analyze(self):
+        """Run the 2D magnetostatic FEM solve and show the B-field overlay."""
+        if self.design.mesh is None:
+            self.do_mesh()
+            if self.design.mesh is None:
+                return
+        from ..model.solver import solve_magnetostatic
+        try:
+            t0 = time.perf_counter()
+            npole = int(self.project.variables.value("N_pole", 10))
+            field = solve_magnetostatic(
+                self.design.mesh, self.design.shapes, self.project.materials,
+                self.design.excitations, n_pole=npole)
+            self.design.field = field
+            self.view.set_field(field)
+            self.btn_field.setChecked(True)
+            dt = (time.perf_counter() - t0) * 1e3
+            self.log(f"Analyzed (magnetostatic): Bmax = {field.bmax:.3f} T  "
+                     f"({dt:.0f} ms)")
+            self.ribbon.setCurrentIndex(5)        # Results tab
+            self.refresh_trees()
+        except Exception as e:
+            QMessageBox.warning(self, "Analyze error", str(e))
+            self.log(f"Analyze FAILED: {e}")
+
+    def toggle_field(self):
+        on = self.btn_field.isChecked()
+        if on and self.design.field is None:
+            self.log("먼저 Analyze를 실행하세요.")
+            self.btn_field.setChecked(False); return
+        self.view.show_field = on and self.design.field is not None
+        self.view.set_field(self.design.field if self.view.show_field else None)
 
     def edit_solve_setup(self):
         from .setup_dialogs import SolveSetupDialog
