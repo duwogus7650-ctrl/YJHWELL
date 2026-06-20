@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# large media (design recordings — keep out of source repo)
+*.mp4
+*.mov
+*.avi
+*.zip
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

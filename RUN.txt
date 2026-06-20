@@ -1,0 +1,35 @@
+YJHWell — Made By 여재현
+=========================
+
+2D PM 모터 설계/해석 프로그램 (Ansys Maxwell 2D 워크플로우의 경량 클론).
+스택: Python 3.12 + PyQt6 + numpy/scipy + shapely + triangle + pyqtgraph + Pillow
+
+[처음 실행 — 가상환경 생성 및 의존성 설치]
+1) Python 3.12 설치 확인:  py -3.12 --version
+2) 폴더에서:
+     py -3.12 -m venv .venv
+     .venv\Scripts\python -m pip install --upgrade pip
+     .venv\Scripts\python -m pip install PyQt6 numpy scipy shapely triangle pyqtgraph pillow
+3) 실행:
+     .venv\Scripts\pythonw run.py        (창 모드)
+   또는
+     .venv\Scripts\python run.py         (콘솔 로그 보임)
+
+[주요 기능]
+- 작도: Circle/Rectangle/Polyline/Spline/CenterPointArc, 그리드 스냅(닫힘 마커),
+  히스토리 기반 Subtract/Unite(치수 재수정), 파라메트릭 변수(Variables 탭 편집→형상 자동 갱신)
+- 재질: Select Definition / View·Edit Material / BH·BP 곡선
+- 해석조건(v2): Excitation/Boundary/Motion/Mesh Op/Solve Setup → Project Manager 트리
+- 메시: 삼각 FE 메시 생성·표시
+- UI: 프레임리스 커스텀 타이틀바(클로드 스타일), 네이비·시안 테크 테마, Undo/Redo(Ctrl+Z/Y)
+
+[폴더 구조]
+- run.py                  실행 진입점
+- litemaxwell/            프로그램 패키지
+    app.py                테마(QSS)·진입
+    model/                geometry·materials·mesh·variables·project (엔진)
+    ui/                   main_window·modeler_view·ribbon·dialogs 등 (UI)
+    resources/spg_logo.png
+- docs/maxwell_ui_spec.md 영상 분석 기반 UI 사양
+- tasks/                  진행상황(todo)·교훈(lessons)
+- verify_shots.py         스크린샷 검증 스크립트
