@@ -10,9 +10,10 @@ import numpy as np
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 from PyQt6.QtGui import (QPainter, QPen, QBrush, QColor, QPainterPath,
                          QPolygonF, QFont)
-from PyQt6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPathItem)
+from PyQt6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPathItem,
+                             QGraphicsLineItem)
 
-from ..model.geometry import Shape
+from ..model.geometry import Shape, CoordSystem
 
 def _jet(t: float) -> QColor:
     """Jet-style colormap (blue->cyan->green->yellow->red) for t in [0,1]."""
@@ -122,6 +123,8 @@ class ModelerView(QGraphicsView):
         self.field = None
         self.show_field = False
         self.snap = False
+        self.wcs = CoordSystem()           # active working coordinate system
+        self._cs_items: list = []          # the CS triad graphics
         self._osnap = True                 # object snap to existing vertices
         self._snap_marker = None           # (x, y) of active snap, for the marker
         # themeable colours (default dark)
@@ -132,6 +135,34 @@ class ModelerView(QGraphicsView):
         self.c_axis_y = AXIS_Y
         self.c_mesh = MESH_PEN
         self._scene.selectionChanged.connect(self.selectionChanged)
+
+    # --- working coordinate system (Maxwell 'Relative CS') ---------------
+    def to_global(self, x, y):
+        """Map a point typed in the active CS to global model coords."""
+        return self.wcs.to_global(x, y)
+
+    def from_global(self, gx, gy):
+        """Map a global point to the active CS (for the coordinate readout)."""
+        return self.wcs.from_global(gx, gy)
+
+    def set_wcs(self, name="Global", ox=0.0, oy=0.0, rot_deg=0.0):
+        self.wcs = CoordSystem(name, ox, oy, rot_deg)
+        self._draw_cs_triad()
+
+    def _draw_cs_triad(self):
+        for it in self._cs_items:
+            self._scene.removeItem(it)
+        self._cs_items = []
+        if self.wcs.is_global:
+            return                         # global CS shares the main axes
+        L = 14.0
+        ox, oy = self.wcs.ox, self.wcs.oy
+        for (ex, ey), col in ((self.wcs.to_global(L, 0), "#e0524b"),
+                              (self.wcs.to_global(0, L), "#3fae57")):
+            ln = QGraphicsLineItem(ox, oy, ex, ey)
+            pen = QPen(QColor(col)); pen.setWidthF(1.6)
+            ln.setPen(pen); ln.setZValue(900)
+            self._scene.addItem(ln); self._cs_items.append(ln)
 
     def set_dark(self, dark: bool):
         if dark:

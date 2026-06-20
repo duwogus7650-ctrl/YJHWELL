@@ -6,6 +6,7 @@ geometry (Polygon or MultiPolygon) so boolean operations come for free.
 from __future__ import annotations
 
 import itertools
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -98,6 +99,32 @@ class Shape:
             for hole in p.interiors:
                 out.append(np.asarray(hole.coords))
         return out
+
+
+@dataclass
+class CoordSystem:
+    """A working coordinate system (Maxwell 'Relative CS'): an origin offset plus
+    a rotation.  A point typed in this CS maps to global coordinates via
+        (gx, gy) = origin + R(rot)·(xr, yr),   R = [[cosθ,-sinθ],[sinθ,cosθ]].
+    Offset-only = rot 0; Rotated-only = origin 0; Both = a general frame."""
+
+    name: str = "Global"
+    ox: float = 0.0
+    oy: float = 0.0
+    rot_deg: float = 0.0
+
+    def to_global(self, xr: float, yr: float) -> tuple[float, float]:
+        t = math.radians(self.rot_deg); c = math.cos(t); s = math.sin(t)
+        return (self.ox + xr * c - yr * s, self.oy + xr * s + yr * c)
+
+    def from_global(self, gx: float, gy: float) -> tuple[float, float]:
+        t = math.radians(self.rot_deg); c = math.cos(t); s = math.sin(t)
+        dx, dy = gx - self.ox, gy - self.oy
+        return (dx * c + dy * s, -dx * s + dy * c)
+
+    @property
+    def is_global(self) -> bool:
+        return self.ox == 0.0 and self.oy == 0.0 and self.rot_deg == 0.0
 
 
 # --- boolean operations --------------------------------------------------

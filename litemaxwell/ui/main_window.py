@@ -321,6 +321,9 @@ class MainWindow(QMainWindow):
         g.add_button("Assign", self.assign_material_dialog, icon="material")
         g.add_button("Edit", self.edit_selected_material, icon="editmat")
         g.add_button("New", self.new_material, icon="newmat")
+        g = t.add_group("Coordinates")
+        g.add_button("Relative CS", self.relative_cs_dialog, icon="around")
+        g.add_button("Set Global", self.set_global_cs, icon="fit")
         t.finish()
 
         # Model
@@ -554,7 +557,13 @@ class MainWindow(QMainWindow):
                 if s.is_closed:
                     sn.addChild(QTreeWidgetItem(["CoverLines"]))
                 mnode.addChild(sn)
-        for extra in ("Coordinate Systems", "Planes", "Lists"):
+        cs_node = QTreeWidgetItem(["Coordinate Systems"])
+        cs_node.addChild(QTreeWidgetItem(["Global"]))
+        for cs in self.design.coord_systems:
+            cs_node.addChild(QTreeWidgetItem(
+                [f"{cs['name']}  (o={cs['ox']:g},{cs['oy']:g}  rot={cs['rot']:g}°)"]))
+        self.model_tree.addTopLevelItem(cs_node)
+        for extra in ("Planes", "Lists"):
             self.model_tree.addTopLevelItem(QTreeWidgetItem([extra]))
         self.model_tree.expandToDepth(2)
         self.props.set_materials(list(self.project.materials.keys()))
@@ -614,17 +623,24 @@ class MainWindow(QMainWindow):
         self.props.show_shape(s)
 
     def _on_coord(self, x, y):
-        self.units_lbl.setText(f"X {x:.2f}  Y {y:.2f}   |  Units: mm")
+        # readout in the active CS (Maxwell shows coords relative to the WCS)
+        rx, ry = self.view.from_global(x, y)
+        cs = "" if self.view.wcs.is_global else f"  [{self.view.wcs.name}]"
+        self.units_lbl.setText(f"X {rx:.2f}  Y {ry:.2f}   |  Units: mm{cs}")
 
     def _on_prompt(self, msg):
         self.sel_lbl.setText(msg)
         lp = self.view.last_point()
-        self.coordbar.set_base(lp.x(), lp.y())
+        bx, by = self.view.from_global(lp.x(), lp.y())   # base in WCS frame
+        self.coordbar.set_base(bx, by)
 
     def _coord_submitted(self, x, y):
-        self.view.submit_point(x, y)
+        # the coordbar works in the active CS frame -> map to global to place it
+        gx, gy = self.view.to_global(x, y)
+        self.view.submit_point(gx, gy)
         lp = self.view.last_point()
-        self.coordbar.set_base(lp.x(), lp.y())
+        bx, by = self.view.from_global(lp.x(), lp.y())
+        self.coordbar.set_base(bx, by)
 
     def _on_command_edited(self, field, value):
         s = self._selected()
@@ -1471,6 +1487,7 @@ class MainWindow(QMainWindow):
         if d.exec():
             self._snapshot()
             cx, cy, r = d.values()
+            cx, cy = self.view.to_global(cx, cy)         # center in active CS
             self.view._naming["circle"] += 1
             s = Shape.circle(f"Circle{self.view._naming['circle']}", cx, cy, r)
             self.design.add(s); self.view.add_shape(s)
@@ -1482,10 +1499,36 @@ class MainWindow(QMainWindow):
             self._snapshot()
             x0, y0, x1, y1 = d.values()
             self.view._naming["rect"] += 1
-            s = Shape.rectangle(f"Rectangle{self.view._naming['rect']}",
-                                x0, y0, x1, y1)
+            if self.view.wcs.is_global:
+                s = Shape.rectangle(f"Rectangle{self.view._naming['rect']}",
+                                    x0, y0, x1, y1)
+            else:                                  # rotated/offset CS -> polygon
+                corners = [self.view.to_global(x0, y0), self.view.to_global(x1, y0),
+                           self.view.to_global(x1, y1), self.view.to_global(x0, y1)]
+                s = Shape.polygon(f"Rectangle{self.view._naming['rect']}", corners)
             self.design.add(s); self.view.add_shape(s)
             self.log(f"Created {s.name}"); self.refresh_trees()
+
+    def relative_cs_dialog(self):
+        """Create/activate a Relative CS (offset + rotation) like Maxwell."""
+        from .dialogs import RelativeCSDialog
+        n = len([c for c in self.design.coord_systems]) + 1
+        d = RelativeCSDialog(self, default_name=f"RelativeCS{n}")
+        if d.exec():
+            name, ox, oy, rot = d.values()
+            self.view.set_wcs(name, ox, oy, rot)
+            self.design.coord_systems = [c for c in self.design.coord_systems
+                                         if c["name"] != name]
+            self.design.coord_systems.append(
+                {"name": name, "ox": ox, "oy": oy, "rot": rot})
+            self.refresh_trees()
+            self.log(f"Working CS = {name} (origin {ox:g},{oy:g} mm, rot {rot:g}°). "
+                     f"이후 입력 좌표는 이 CS 기준으로 배치됩니다.")
+
+    def set_global_cs(self):
+        """Reset the working coordinate system back to Global."""
+        self.view.set_wcs()
+        self.log("Working CS = Global")
 
     def do_around_axis(self):
         sel = self.view.selected_shapes()
