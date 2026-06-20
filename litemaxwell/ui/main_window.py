@@ -354,6 +354,8 @@ class MainWindow(QMainWindow):
         g.add_button("Torque Plot", self.do_torque_plot, icon="report")
         g.add_button("Back-EMF", self.do_backemf_plot, icon="report")
         g.add_button("Load Torque", self.do_load_torque_plot, icon="report")
+        g.add_button("Transient EMF", self.do_transient_emf, icon="report")
+        g.add_button("Core Loss", self.do_core_loss, icon="report")
         self.btn_field = g.add_button("Field Overlay", self.toggle_field,
                                       checkable=True, icon="mesh")
         g = t.add_group("Optimetrics")
@@ -1291,6 +1293,64 @@ class MainWindow(QMainWindow):
                  f"(I_pk={ipk:.3g} A, q축 γ=90°)")
         ResultPlotDialog(ang, tq, "Rotor position [deg]", "Torque [N·m]",
                          "Load Torque Plot", self).exec()
+
+    def do_transient_emf(self):
+        """Back-EMF as a time-domain waveform (constant-speed transient)."""
+        from PyQt6.QtWidgets import QApplication
+        from ..model.solver import transient_emf
+        from .results import ResultPlotDialog
+        v = self.project.variables
+        npole = int(v.value("N_pole", 10))
+        Lstk = v.value("L_stk", 28.0) * 1e-3
+        turns = int(v.value("Zc", 14))
+        rpm = v.value("BaseRPM", 3000.0)
+        self.log("Transient Back-EMF (시간영역) 계산 중…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            t_ms, emf, period = transient_emf(self.design.shapes,
+                                              self.project.materials, n_pole=npole,
+                                              base_rpm=rpm, turns=turns,
+                                              L_stk_m=Lstk, n_cycles=2, mesh_area=12.0)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Transient error", str(e)); return
+        QApplication.restoreOverrideCursor()
+        self.log(f"Transient EMF: f_elec = {1.0/period:.1f} Hz "
+                 f"(period {period*1e3:.3f} ms), 2 cycles @ {rpm:g} rpm")
+        series = [("InducedVoltage(PhaseA)", emf["A"]),
+                  ("InducedVoltage(PhaseB)", emf["B"]),
+                  ("InducedVoltage(PhaseC)", emf["C"])]
+        ResultPlotDialog(t_ms, emf["A"], "Time [ms]", "Induced voltage [V]",
+                         "Transient Back-EMF vs Time", self, series=series).exec()
+
+    def do_core_loss(self):
+        """Iron (core) loss via Steinmetz/Bertotti over one electrical cycle."""
+        from PyQt6.QtWidgets import QApplication
+        from ..model.solver import core_loss_sweep, electrical_freq
+        v = self.project.variables
+        npole = int(v.value("N_pole", 10))
+        Lstk = v.value("L_stk", 28.0) * 1e-3
+        rpm = v.value("BaseRPM", 3000.0)
+        f = electrical_freq(rpm, npole)
+        self.log(f"Core loss 계산 중… (f_elec={f:.1f} Hz, 회전 1주기 peak B)")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            r = core_loss_sweep(self.design.shapes, self.project.materials,
+                                freq_hz=f, n_pole=npole, L_stk_m=Lstk,
+                                n_steps=13, mesh_area=12.0)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Core loss error", str(e)); return
+        QApplication.restoreOverrideCursor()
+        self.log(f"Core Loss @ {f:.1f} Hz: total {r['total']:.3f} W "
+                 f"(hyst {r['hyst']:.3f} / eddy {r['eddy']:.3f} / excess {r['excess']:.3f})")
+        QMessageBox.information(
+            self, "Core Loss (Steinmetz/Bertotti)",
+            f"Electrical frequency: {f:.1f} Hz\n\n"
+            f"Total iron loss: {r['total']:.3f} W\n"
+            f"  · hysteresis : {r['hyst']:.3f} W\n"
+            f"  · eddy        : {r['eddy']:.3f} W\n"
+            f"  · excess      : {r['excess']:.3f} W")
 
     def do_optimetrics(self):
         """Parametric sweep over one design variable -> metric table + CSV."""

@@ -27,7 +27,8 @@ from litemaxwell.model.materials import default_library, BHCurve
 from litemaxwell.model import apply_cmd
 from litemaxwell.model.mesh import generate
 from litemaxwell.model.solver import (solve_magnetostatic, rotor_sweep,
-                                      backemf_sweep, load_torque_sweep)
+                                      backemf_sweep, load_torque_sweep,
+                                      _steinmetz)
 
 # NB: these are CLI-tunable, not hardwired. The sample defaults happen to be a
 # 10-pole/12-slot machine, but the solver + checks are design-agnostic — run any
@@ -143,6 +144,21 @@ load_torque_dq_ratio = load_torque_avg_Nm / T_dq if T_dq else 0.0
 avg2, _ = _load_avg(2 * I_PEAK, best_g)
 load_torque_scaling = abs(avg2) / load_torque_avg_Nm if load_torque_avg_Nm else 0.0
 
+# --- Core loss (Steinmetz/Bertotti): peak |B| over a cycle, then loss at f & 2f
+f_elec = BASE_RPM / 60.0 * (N_POLE / 2)                # electrical frequency [Hz]
+Bpeak = None
+for th in np.linspace(0.0, 720.0 / N_POLE, 9):
+    fld = solve_magnetostatic(swp_mesh, shapes, mats, None, n_pole=N_POLE,
+                              rotor_angle_deg=th)
+    Bpeak = fld.Bmag if Bpeak is None else np.maximum(Bpeak, fld.Bmag)
+cl1 = _steinmetz(Bpeak, swp_mesh, shapes, mats, f_elec, 0.028)
+cl2 = _steinmetz(Bpeak, swp_mesh, shapes, mats, 2 * f_elec, 0.028)
+coreloss_total_W = cl1["total"]
+# design-agnostic: total iron loss must scale with f between f^1 (pure hyst) and
+# f^2 (pure eddy) -> ratio loss(2f)/loss(f) in [2,4].
+cl_ratio = cl2["total"] / cl1["total"] if cl1["total"] else 0.0
+coreloss_scaling_ok = 1.0 if 2.0 - 1e-6 <= cl_ratio <= 4.0 + 1e-6 else 0.0
+
 results = {
     # ---- regression baselines (THIS sample's fingerprint; not a universal target)
     "airgap_B_mean": round(float(f.Bmag[gap].mean()), 5),
@@ -151,6 +167,7 @@ results = {
     "cogging_pk2pk": round(float(tq.max() - tq.min()), 6),
     "emf_peak_V":    round(emf_peak_V, 4),
     "load_torque_avg_Nm": round(load_torque_avg_Nm, 4),
+    "coreloss_total_W":   round(coreloss_total_W, 4),
     # ---- design-agnostic PHYSICS oracles (must hold for any motor) -------------
     "emf_balance":           round(emf_balance, 4),         # ->1 balanced 3-phase
     "emf_consistency":       round(emf_consistency, 4),     # ->1 e1 = we*lam1
@@ -162,6 +179,8 @@ results = {
     "nl_saturation_ratio": round(nl_saturation_ratio, 4),   # <1 peak B capped by saturation
     "nl_airgap_ratio":     round(nl_airgap_ratio, 4),       # ->1 air-gap B ~ unchanged
     "nl_fallback_resid":   round(nl_fallback_resid, 8),     # ->0 no-BH == linear
+    # core loss
+    "coreloss_scaling_ok": round(coreloss_scaling_ok, 4),   # ->1 loss(2f)/loss(f) in [2,4]
 }
 with open(os.path.join(a.out, "results.json"), "w") as fp:
     json.dump(results, fp, indent=2)

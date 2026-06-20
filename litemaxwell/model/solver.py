@@ -349,6 +349,83 @@ def load_torque_sweep(shapes, materials, n_pole=10, n_steps=19, L_stk_m=0.028,
     return angles, tq
 
 
+def electrical_freq(base_rpm, n_pole):
+    """Electrical frequency [Hz] = mechanical rev/s × pole pairs."""
+    return base_rpm / 60.0 * (n_pole / 2.0)
+
+
+def transient_emf(shapes, materials, n_pole=10, base_rpm=3000.0, turns=14,
+                  L_stk_m=0.028, n_cycles=2, n_steps=37, mesh_area=12.0, mesh=None):
+    """No-load back-EMF as a TIME-domain waveform (constant-speed quasi-static
+    transient): the one-electrical-period position sweep is mapped to time
+    t = θ_mech/(360·rev_per_s) and tiled over n_cycles, matching the Maxwell
+    transient 'Time=' plots.  Returns (t_ms, emf{A,B,C}[V], period_s)."""
+    ang, emf, _ = backemf_sweep(shapes, materials, n_pole=n_pole, n_steps=n_steps,
+                                L_stk_m=L_stk_m, turns=turns, base_rpm=base_rpm,
+                                mesh_area=mesh_area, mesh=mesh)
+    period_s = 120.0 / (n_pole * base_rpm)          # one electrical period [s]
+    t1 = ang / ang[-1] * period_s
+    t = []; e = {p: [] for p in "ABC"}
+    for c in range(max(1, int(n_cycles))):
+        t.extend((t1[:-1] + c * period_s).tolist())
+        for p in "ABC":
+            e[p].extend(emf[p][:-1].tolist())
+    t.append(int(max(1, n_cycles)) * period_s)
+    for p in "ABC":
+        e[p].append(emf[p][0])
+    return np.asarray(t) * 1e3, {p: np.asarray(e[p]) for p in "ABC"}, period_s
+
+
+def _steinmetz(Bpeak, mesh, shapes, materials, freq_hz, L_stk_m):
+    """Bertotti/Steinmetz iron loss [W] from a per-element peak |B| array.
+    P_v = Kh·f·Bm² + Kc·(f·Bm)² + Ke·(f·Bm)^1.5  [W/m³], integrated over the
+    steel volume (element area × stack length).  Returns {total,hyst,eddy,excess}."""
+    tris = np.asarray(mesh.triangles, int)
+    P = np.asarray(mesh.nodes, float)[tris] * 1e-3
+    twoA = ((P[:, 1, 0] - P[:, 0, 0]) * (P[:, 2, 1] - P[:, 0, 1])
+            - (P[:, 2, 0] - P[:, 0, 0]) * (P[:, 1, 1] - P[:, 0, 1]))
+    vol = 0.5 * np.abs(twoA) * L_stk_m                 # m³ per element
+    ns = len(shapes)
+    kh = np.zeros(ns); kc = np.zeros(ns); ke = np.zeros(ns); steel = np.zeros(ns, bool)
+    for i, s in enumerate(shapes):
+        mat = materials.get(s.material)
+        if mat and not getattr(mat, "is_magnet", False):
+            kh[i], kc[i], ke[i] = mat.kh, mat.kc, mat.ke
+            steel[i] = (mat.kh > 0 or mat.kc > 0 or mat.ke > 0)
+    tag = np.asarray(mesh.tri_shape, int)
+    cl = np.clip(tag, 0, ns - 1)
+    m = (tag >= 0) & steel[cl]
+    f = float(freq_hz)
+    Bm = np.asarray(Bpeak, float)
+    fB = f * Bm
+    ph = (kh[cl] * f * Bm ** 2 * vol)[m].sum()
+    pe = (kc[cl] * fB ** 2 * vol)[m].sum()
+    px = (ke[cl] * fB ** 1.5 * vol)[m].sum()
+    return {"total": float(ph + pe + px), "hyst": float(ph),
+            "eddy": float(pe), "excess": float(px)}
+
+
+def core_loss(field, mesh, shapes, materials, freq_hz, L_stk_m):
+    """Iron loss [W] from a single solved field (uses that snapshot's |B|)."""
+    return _steinmetz(field.Bmag, mesh, shapes, materials, freq_hz, L_stk_m)
+
+
+def core_loss_sweep(shapes, materials, freq_hz, n_pole=10, L_stk_m=0.028,
+                    n_steps=13, mesh_area=12.0, mesh=None):
+    """Iron loss [W] using the PEAK |B| each element reaches over one electrical
+    period (rotor swept, magnets-only) — the physically correct B_m for Steinmetz."""
+    from .mesh import generate
+    if mesh is None:
+        mesh = generate(shapes, max_area=mesh_area)
+    span = 720.0 / max(n_pole, 1)
+    Bpeak = None
+    for th in np.linspace(0.0, span, n_steps):
+        f = solve_magnetostatic(mesh, shapes, materials, None,
+                                n_pole=n_pole, rotor_angle_deg=th)
+        Bpeak = f.Bmag if Bpeak is None else np.maximum(Bpeak, f.Bmag)
+    return _steinmetz(Bpeak, mesh, shapes, materials, freq_hz, L_stk_m)
+
+
 def _current_density(shapes, excitations):
     """Map coil shape name -> uniform current density Jz [A/mm^2 -> A/m^2]."""
     area = {s.name: max(s.area, 1e-9) for s in shapes}

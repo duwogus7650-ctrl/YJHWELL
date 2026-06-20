@@ -6,5 +6,6 @@
   "load_torque_scaling": 2.0,
   "nl_converged": 1.0,
   "nl_airgap_ratio": 1.0,
-  "nl_fallback_resid": 0.0
+  "nl_fallback_resid": 0.0,
+  "coreloss_scaling_ok": 1.0
 }

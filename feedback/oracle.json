@@ -5,6 +5,7 @@
   "cogging_pk2pk": 0.046852,
   "emf_peak_V": 4.1786,
   "load_torque_avg_Nm": 0.1617,
+  "coreloss_total_W": 1.7099,
   "nl_saturation_ratio": 0.7927,
 
   "emf_balance": 1.0,
@@ -14,5 +15,6 @@
   "load_torque_scaling": 2.0,
   "nl_converged": 1.0,
   "nl_airgap_ratio": 1.0,
-  "nl_fallback_resid": 0.0
+  "nl_fallback_resid": 0.0,
+  "coreloss_scaling_ok": 1.0
 }
