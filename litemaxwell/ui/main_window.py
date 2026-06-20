@@ -349,9 +349,11 @@ class MainWindow(QMainWindow):
         # Results / Automation (placeholders for later stages)
         t = self.ribbon.add_tab("Results")
         g = t.add_group("Create Report")
-        g.add_button("Rect Plot", self._todo, icon="report")
+        g.add_button("Torque Plot", self.do_torque_plot, icon="report")
         self.btn_field = g.add_button("Field Overlay", self.toggle_field,
                                       checkable=True, icon="mesh")
+        g = t.add_group("Optimetrics")
+        g.add_button("Param Sweep", self.do_optimetrics, icon="report")
         t.finish()
         t = self.ribbon.add_tab("Automation")
         g = t.add_group("Scripting")
@@ -1157,6 +1159,112 @@ class MainWindow(QMainWindow):
             self.btn_field.setChecked(False); return
         self.view.show_field = on and self.design.field is not None
         self.view.set_field(self.design.field if self.view.show_field else None)
+
+    def _estimate_gap_mm(self):
+        """Mid air-gap radius: between the outer rotor/magnet radius and the
+        inner stator radius (used as the Maxwell-stress integration contour)."""
+        import numpy as np
+        rotor_max = 0.0; stator_min = 1e9
+        for s in self.design.shapes:
+            m = self.project.materials.get(s.material)
+            rr = []
+            for ring in s.rings():
+                rr.extend(np.hypot(ring[:, 0], ring[:, 1]).tolist())
+            if not rr:
+                continue
+            is_rot = ((m and getattr(m, "is_magnet", False))
+                      or s.name.startswith(("Rotor", "Magnet", "Shaft")))
+            if is_rot:
+                rotor_max = max(rotor_max, max(rr))
+            elif s.name.startswith("Stator"):
+                inner = [v for v in rr if v > 1.0]
+                if inner:
+                    stator_min = min(stator_min, min(inner))
+        if rotor_max > 0 and stator_min < 1e9 and stator_min > rotor_max:
+            return 0.5 * (rotor_max + stator_min)
+        return rotor_max * 1.04 if rotor_max > 0 else 25.0
+
+    def do_torque_plot(self):
+        """Torque vs rotor position (rotation sweep) -> Rectangular Plot."""
+        from PyQt6.QtWidgets import QApplication
+        from ..model.solver import rotor_sweep
+        from .results import ResultPlotDialog
+        npole = int(self.project.variables.value("N_pole", 10))
+        Lstk = self.project.variables.value("L_stk", 28.0) * 1e-3
+        rgap = self._estimate_gap_mm()
+
+        def prog(i, n):
+            self.statusBar().showMessage(f"Torque sweep… {i}/{n}")
+            QApplication.processEvents()
+
+        self.log("Torque vs position 계산 중… (회전 스윕)")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            ang, tq = rotor_sweep(self.design.shapes, self.project.materials,
+                                  n_pole=npole, n_steps=19, L_stk_m=Lstk,
+                                  r_gap_mm=rgap, mesh_area=10.0, progress=prog)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Torque error", str(e)); return
+        QApplication.restoreOverrideCursor()
+        self.statusBar().clearMessage()
+        pk = float(tq.max() - tq.min())
+        self.log(f"Torque Plot: pk-pk = {pk:.4g} N·m, mean = {float(tq.mean()):.4g} "
+                 f"N·m (무여자 코깅 토크; 권선 전류 인가 시 평균토크 발생)")
+        ResultPlotDialog(ang, tq, "Rotor position [deg]", "Torque [N·m]",
+                         "Torque Plot 1", self).exec()
+
+    def do_optimetrics(self):
+        """Parametric sweep over one design variable -> metric table + CSV."""
+        from PyQt6.QtWidgets import QApplication
+        import numpy as np
+        from ..model import generate, apply_cmd
+        from ..model.solver import solve_magnetostatic, rotor_sweep
+        from .results import OptimetricsDialog
+        names = list(self.project.variables.exprs.keys())
+        dlg = OptimetricsDialog(names, self)
+        if "MagnetR" in names:
+            dlg.var.setCurrentText("MagnetR")
+
+        def run():
+            var, start, stop, steps, metric = dlg.values()
+            vals = np.linspace(start, stop, steps)
+            dlg.bar.setVisible(True); dlg.bar.setRange(0, steps); dlg.bar.setValue(0)
+            npole = int(self.project.variables.value("N_pole", 10))
+            Lstk = self.project.variables.value("L_stk", 28.0) * 1e-3
+            rgap = self._estimate_gap_mm()
+            saved = self.project.variables.exprs.get(var)
+            rows = []
+            for i, vv in enumerate(vals):
+                self.project.variables.set(var, str(float(vv)))
+                for s in self.design.shapes:
+                    self._reeval_cmd(s.cmd); apply_cmd(s)
+                if metric == 1:                       # Bmax
+                    mesh = generate(self.design.shapes, max_area=10.0)
+                    f = solve_magnetostatic(mesh, self.design.shapes,
+                                            self.project.materials,
+                                            self.design.excitations, n_pole=npole)
+                    m = f.bmax
+                else:                                 # Torque pk-pk
+                    _, tq = rotor_sweep(self.design.shapes, self.project.materials,
+                                        n_pole=npole, n_steps=9, L_stk_m=Lstk,
+                                        r_gap_mm=rgap, mesh_area=14.0)
+                    m = float(tq.max() - tq.min())
+                rows.append((float(vv), float(m)))
+                dlg.bar.setValue(i + 1); QApplication.processEvents()
+            if saved is not None:                     # restore the variable
+                self.project.variables.set(var, saved)
+                for s in self.design.shapes:
+                    self._reeval_cmd(s.cmd); apply_cmd(s)
+                    it = self.view.item_for(s)
+                    if it:
+                        it.rebuild()
+                self.props.show_variables(self.project.variables.rows())
+            dlg.set_results(rows); dlg.bar.setVisible(False)
+            self.log(f"Optimetrics: {var} {start:g}→{stop:g} ({steps} pts) 완료")
+
+        dlg.run_btn.clicked.connect(run)
+        dlg.exec()
 
     def edit_solve_setup(self):
         from .setup_dialogs import SolveSetupDialog

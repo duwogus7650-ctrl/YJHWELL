@@ -698,6 +698,25 @@ class ModelerView(QGraphicsView):
         painter.setPen(ay)
         painter.drawLine(QPointF(0, rect.top()), QPointF(0, rect.bottom()))
 
+    def _draw_colorbar(self, painter, bmax):
+        """Vertical |B| legend, drawn in viewport (device) pixels."""
+        painter.save()
+        painter.resetTransform()
+        vw = self.viewport().width()
+        x = vw - 74; y = 34; w = 16; h = 200
+        for i in range(h):
+            painter.setPen(QPen(_jet(1 - i / h)))
+            painter.drawLine(x, y + i, x + w, y + i)
+        painter.setPen(QPen(QColor("#cfe0ee")))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(x, y, w, h)
+        fnt = painter.font(); fnt.setPointSize(8); painter.setFont(fnt)
+        painter.drawText(x - 4, y - 8, "B [T]")
+        painter.drawText(x + w + 4, y + 9, f"{bmax:.2f}")
+        painter.drawText(x + w + 4, y + h // 2 + 4, f"{bmax / 2:.2f}")
+        painter.drawText(x + w + 4, y + h, "0.00")
+        painter.restore()
+
     def drawForeground(self, painter: QPainter, rect: QRectF):
         super().drawForeground(painter, rect)
         # B-field overlay — fill each triangle by |B| (jet colormap)
@@ -711,6 +730,7 @@ class ModelerView(QGraphicsView):
                 painter.setBrush(QBrush(_jet(t)))
                 painter.drawPolygon(QPolygonF([
                     QPointF(*nodes[a]), QPointF(*nodes[b]), QPointF(*nodes[c])]))
+            self._draw_colorbar(painter, bmax)
         # snap marker — triangle=close, square=vertex, cross=grid
         if self._snap_marker is not None:
             mx, my, kind = self._snap_marker

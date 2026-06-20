@@ -44,8 +44,11 @@ def _tri_grads(p0, p1, p2):
 
 
 def solve_magnetostatic(mesh, shapes, materials, excitations=None,
-                        n_pole=10) -> Field:
-    """Run the FEM solve.  Returns a Field (Az, B per element)."""
+                        n_pole=10, rotor_angle_deg=0.0) -> Field:
+    """Run the FEM solve.  Returns a Field (Az, B per element).
+
+    rotor_angle_deg rotates the magnet pole pattern around the ring (used by
+    the torque sweep so the mesh is built only once)."""
     nodes_mm = np.asarray(mesh.nodes, float)       # for rendering (scene = mm)
     nodes = nodes_mm * 1e-3                         # SI metres for the FEM
     tris = np.asarray(mesh.triangles, int)
@@ -104,7 +107,8 @@ def solve_magnetostatic(mesh, shapes, materials, excitations=None,
     if ismag.any():
         br = np.where(valid, br_s[np.clip(tag, 0, ns - 1)], 0.0)
         r = np.hypot(cents[:, 0], cents[:, 1])
-        ang = np.mod(np.arctan2(cents[:, 1], cents[:, 0]), 2 * np.pi)
+        rot = math.radians(rotor_angle_deg)
+        ang = np.mod(np.arctan2(cents[:, 1], cents[:, 0]) - rot, 2 * np.pi)
         pole = (ang / (2 * np.pi / max(n_pole, 1))).astype(int)
         pol = np.where(pole % 2 == 0, 1.0, -1.0)
         safe = (r > 1e-9) & ismag
@@ -130,6 +134,49 @@ def solve_magnetostatic(mesh, shapes, materials, excitations=None,
     B = np.stack([Bx, By], axis=1)
     Bmag = np.hypot(Bx, By)
     return Field(nodes_mm, tris, Az, B, Bmag)
+
+
+def torque_stress(field, r_gap_mm, L_stk_m, dr_mm=1.2):
+    """Torque on the rotor via the Maxwell stress tensor over a gap annulus.
+    T = (L/μ0) * (1/2dr) * Σ r·Br·Bθ·A_elem  [N·m]."""
+    nodes = field.nodes                              # mm
+    tris = field.triangles
+    P = nodes[tris] * 1e-3                            # m
+    cm = P.mean(axis=1)
+    r = np.hypot(cm[:, 0], cm[:, 1])
+    twoA = ((P[:, 1, 0] - P[:, 0, 0]) * (P[:, 2, 1] - P[:, 0, 1])
+            - (P[:, 2, 0] - P[:, 0, 0]) * (P[:, 1, 1] - P[:, 0, 1]))
+    Ael = 0.5 * np.abs(twoA)
+    dr = dr_mm * 1e-3; rg = r_gap_mm * 1e-3
+    band = np.abs(r - rg) < dr
+    if not band.any():
+        return 0.0
+    rs = np.where(r > 0, r, 1.0)
+    rhx, rhy = cm[:, 0] / rs, cm[:, 1] / rs
+    Br = field.B[:, 0] * rhx + field.B[:, 1] * rhy
+    Bth = -field.B[:, 0] * rhy + field.B[:, 1] * rhx
+    contrib = r * Br * Bth * Ael
+    return float(L_stk_m / MU0 / (2 * dr) * contrib[band].sum())
+
+
+def rotor_sweep(shapes, materials, n_pole=10, n_steps=19, span_deg=None,
+                L_stk_m=0.028, r_gap_mm=25.0, mesh_area=6.0, progress=None):
+    """Torque vs rotor position.  The mesh is built ONCE (coarse) and the magnet
+    pole pattern is rotated in the solver — fast, no per-step re-meshing.
+    Returns (angles_deg, torques[N·m])."""
+    from .mesh import generate
+    if span_deg is None:
+        span_deg = 360.0 / max(n_pole, 1)            # one pole pitch (mech)
+    mesh = generate(shapes, max_area=mesh_area)
+    angles = np.linspace(0.0, span_deg, n_steps)
+    torques = np.zeros(n_steps)
+    for i, th in enumerate(angles):
+        f = solve_magnetostatic(mesh, shapes, materials, None,
+                                n_pole=n_pole, rotor_angle_deg=th)
+        torques[i] = torque_stress(f, r_gap_mm, L_stk_m)
+        if progress:
+            progress(i + 1, n_steps)
+    return angles, torques
 
 
 def _current_density(shapes, excitations):
