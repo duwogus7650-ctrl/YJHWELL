@@ -21,6 +21,7 @@ class Design:
     mesh_ops: list[dict] = field(default_factory=list)
     motion: dict | None = None
     setup: dict | None = None
+    coord_systems: list = field(default_factory=list)  # relative CS: {name,ox,oy,rot}
     field: object = None                   # solved field result (Field)
 
     def add(self, shape: Shape) -> Shape:

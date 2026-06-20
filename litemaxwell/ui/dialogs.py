@@ -471,6 +471,27 @@ class RectDialog(_Base):
         return x, y, x + self.w.value(), y + self.h.value()
 
 
+class RelativeCSDialog(_Base):
+    """Maxwell-style Relative Coordinate System: offset origin + rotation.
+    Type is a hint (Offset/Rotated/Both); all fields apply."""
+    def __init__(self, parent=None, default_name="RelativeCS1"):
+        super().__init__("Create Relative CS", parent)
+        self.name = QLineEdit(default_name)
+        self.mode = QComboBox(); self.mode.addItems(["Offset", "Rotated", "Both"])
+        self.ox = _spin(-1e4, 1e4, 3); self.oy = _spin(-1e4, 1e4, 3)
+        self.rot = _spin(-360.0, 360.0, 3, 0.0)
+        self.form.addRow("Name", self.name)
+        self.form.addRow("Type", self.mode)
+        self.form.addRow("Origin X [mm]", self.ox)
+        self.form.addRow("Origin Y [mm]", self.oy)
+        self.form.addRow("Rotation [deg]", self.rot)
+        self._add_buttons()
+
+    def values(self):
+        return (self.name.text().strip() or "RelativeCS1",
+                self.ox.value(), self.oy.value(), self.rot.value())
+
+
 class AroundAxisDialog(_Base):
     def __init__(self, parent=None):
         super().__init__("Duplicate Around Axis", parent)

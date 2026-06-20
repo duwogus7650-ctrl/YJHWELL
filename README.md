@@ -31,7 +31,8 @@ Stack: Python 3.12 · PyQt6 · numpy/scipy · shapely · triangle · pyqtgraph.
 
 - **Modeler** — ribbon UI, dual project/model trees, parametric variables
   (expression evaluation), draw (circle/rect/polyline/spline/arc), booleans,
-  duplicate-around-axis/mirror, material browser + B-H / B-P curve editors.
+  duplicate-around-axis/mirror, **relative coordinate systems** (offset + rotation,
+  like Maxwell's Relative CS), material browser + B-H / B-P curve editors.
 - **FEM solver** (`litemaxwell/model/solver.py`)
   - 2D magnetostatic, linear-triangle vector-potential formulation
   - permanent magnets (radial remanence source) + coil currents

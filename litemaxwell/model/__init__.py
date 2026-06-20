@@ -1,4 +1,4 @@
-from .geometry import (Shape, boolean_unite, boolean_subtract,
+from .geometry import (Shape, CoordSystem, boolean_unite, boolean_subtract,
                        boolean_intersect, translated, rotated, mirrored,
                        duplicate_around_axis, duplicate_along_line, apply_cmd,
                        polyline_points, spline_points, segment_geometry,
@@ -9,7 +9,7 @@ from .project import Project, Design
 from .variables import Variables, default_variables
 
 __all__ = [
-    "Shape", "boolean_unite", "boolean_subtract", "boolean_intersect",
+    "Shape", "CoordSystem", "boolean_unite", "boolean_subtract", "boolean_intersect",
     "translated", "rotated", "mirrored", "duplicate_around_axis",
     "duplicate_along_line", "apply_cmd",
     "Material", "BHCurve", "default_library", "system_library", "MU0",
