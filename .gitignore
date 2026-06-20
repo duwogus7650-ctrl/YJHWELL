@@ -12,6 +12,26 @@ __pycache__/
 *.avi
 *.zip
 
+# derived video frames (regenerate from the recordings)
+frames_v1/
+frames_v2/
+frames_v3/
+
+# tool / agent state (not project source)
+.omc/
+.bkit/
+.claude/
+
+# solver-harness scratch outputs (configs + oracles ARE tracked)
+feedback/out/
+feedback/out_*/
+feedback/.fb_*/
+
+# build artifacts
+build/
+dist/
+*.spec
+
 # OS / editor
 Thumbs.db
 .DS_Store
