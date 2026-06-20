@@ -1297,7 +1297,8 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QApplication
         import numpy as np
         from ..model import generate, apply_cmd
-        from ..model.solver import solve_magnetostatic, rotor_sweep
+        from ..model.solver import (solve_magnetostatic, rotor_sweep,
+                                    backemf_sweep, load_torque_sweep)
         from .results import OptimetricsDialog
         names = list(self.project.variables.exprs.keys())
         dlg = OptimetricsDialog(names, self)
@@ -1310,6 +1311,9 @@ class MainWindow(QMainWindow):
             dlg.bar.setVisible(True); dlg.bar.setRange(0, steps); dlg.bar.setValue(0)
             npole = int(self.project.variables.value("N_pole", 10))
             Lstk = self.project.variables.value("L_stk", 28.0) * 1e-3
+            turns = int(self.project.variables.value("Zc", 14))
+            rpm = self.project.variables.value("BaseRPM", 3000.0)
+            ipk = self.project.variables.value("I_rms", 8.2) * (2 ** 0.5)
             rgap = self._estimate_gap_mm()
             saved = self.project.variables.exprs.get(var)
             rows = []
@@ -1317,13 +1321,26 @@ class MainWindow(QMainWindow):
                 self.project.variables.set(var, str(float(vv)))
                 for s in self.design.shapes:
                     self._reeval_cmd(s.cmd); apply_cmd(s)
-                if metric == 1:                       # Bmax
+                if metric == 1:                       # Bmax [T]
                     mesh = generate(self.design.shapes, max_area=10.0)
                     f = solve_magnetostatic(mesh, self.design.shapes,
                                             self.project.materials,
                                             self.design.excitations, n_pole=npole)
                     m = f.bmax
-                else:                                 # Torque pk-pk
+                elif metric == 2:                     # Back-EMF peak [V]
+                    _, emf, _ = backemf_sweep(self.design.shapes,
+                                              self.project.materials, n_pole=npole,
+                                              n_steps=19, L_stk_m=Lstk, turns=turns,
+                                              base_rpm=rpm, mesh_area=14.0)
+                    m = max(float(abs(emf[p]).max()) for p in "ABC")
+                elif metric == 3:                     # Load torque avg [N·m]
+                    _, tq = load_torque_sweep(self.design.shapes,
+                                              self.project.materials, n_pole=npole,
+                                              n_steps=7, L_stk_m=Lstk, r_gap_mm=rgap,
+                                              turns=turns, i_peak=ipk, gamma_deg=90.0,
+                                              base_rpm=rpm, mesh_area=16.0)
+                    m = float(tq.mean())
+                else:                                 # Torque pk-pk (cogging) [N·m]
                     _, tq = rotor_sweep(self.design.shapes, self.project.materials,
                                         n_pole=npole, n_steps=9, L_stk_m=Lstk,
                                         r_gap_mm=rgap, mesh_area=14.0)

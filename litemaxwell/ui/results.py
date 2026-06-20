@@ -76,7 +76,8 @@ class OptimetricsDialog(QDialog):
         self.start = self._spin(1.0); self.stop = self._spin(2.0)
         self.steps = QSpinBox(); self.steps.setRange(2, 50); self.steps.setValue(6)
         self.metric = QComboBox()
-        self.metric.addItems(["Torque pk-pk [N·m]", "Bmax [T]"])
+        self.metric.addItems(["Torque pk-pk [N·m]", "Bmax [T]",
+                              "Back-EMF peak [V]", "Load torque avg [N·m]"])
         form.addRow("Variable", self.var)
         form.addRow("Start", self.start)
         form.addRow("Stop", self.stop)
