@@ -2,7 +2,7 @@ from .geometry import (Shape, CoordSystem, boolean_unite, boolean_subtract,
                        boolean_intersect, translated, rotated, mirrored,
                        duplicate_around_axis, duplicate_along_line, apply_cmd,
                        polyline_points, spline_points, segment_geometry,
-                       cover_lines, geom_from_cmd)
+                       cover_lines, geom_from_cmd, fillet_corner)
 from .materials import Material, BHCurve, default_library, system_library, MU0
 from .mesh import Mesh, generate
 from .project import Project, Design
