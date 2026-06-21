@@ -499,6 +499,7 @@ class MainWindow(QMainWindow):
         # Project Manager
         self.proj_tree.clear()
         root = QTreeWidgetItem([self.project.name + "*"])
+        root.setData(0, Qt.ItemDataRole.UserRole, ("project", None))
         self.proj_tree.addTopLevelItem(root)
         d = QTreeWidgetItem([f"{self.design.name} ({self.design.solver}, XY)*"])
         root.addChild(d)
@@ -1005,11 +1006,23 @@ class MainWindow(QMainWindow):
         item = self.proj_tree.itemAt(pos)
         data = item.data(0, Qt.ItemDataRole.UserRole) if item else None
         m = QMenu(self)
+        m.addAction("Rename Project…", self.rename_project)
         if data and data[0] == "mat":
             mat = data[1]
             m.addAction("View / Edit Material…", lambda: self.edit_material(mat))
         m.addAction("New Material…", self.new_material)
         m.exec(self.proj_tree.viewport().mapToGlobal(pos))
+
+    def rename_project(self):
+        name, ok = _QInputDialog.getText(self, "Rename Project", "Project name:",
+                                         text=self.project.name)
+        if ok and name.strip():
+            self.project.name = name.strip()
+            self._update_title()
+            if hasattr(self, "hdr_title"):
+                self.hdr_title.setText(f"{self.project.name}  ›  {self.design.name}")
+            self.refresh_trees()
+            self.log(f"Project renamed → {self.project.name}")
 
     def edit_variables(self):
         dlg = ProjectVariablesDialog(self.project.variables, self)

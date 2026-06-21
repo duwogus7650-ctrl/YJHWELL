@@ -1,0 +1,5 @@
+# OPTIONAL — FEMM hybrid backend / verification oracle.
+# Requires FEMM itself installed separately (https://www.femm.info, e.g. C:\femm42).
+# The app runs fully without this; install only to use the FEMM high-accuracy
+# backend or cross-validate the built-in solver (feedback/femm_xval.py).
+pyfemm==0.1.3
