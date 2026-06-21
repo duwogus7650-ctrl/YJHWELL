@@ -22,6 +22,8 @@ class Design:
     motion: dict | None = None
     setup: dict | None = None
     coord_systems: list = field(default_factory=list)  # relative CS: {name,ox,oy,rot}
+    symmetry_mult: int = 1                 # 2D Design Settings symmetry multiplier
+    model_depth: float = 28.0              # model depth / stack length [mm]
     field: object = None                   # solved field result (Field)
 
     def add(self, shape: Shape) -> Shape:
