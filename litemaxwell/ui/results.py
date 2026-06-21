@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QMenu,
                              QPushButton, QFileDialog, QFormLayout, QComboBox,
                              QDoubleSpinBox, QSpinBox, QTableWidget,
                              QTableWidgetItem, QDialogButtonBox, QProgressBar)
 
 
 class ResultPlotDialog(QDialog):
-    """Rectangular plot (x vs y) with peak-to-peak readout and CSV export."""
+    """Rectangular plot (x vs y) with CSV export and a Maxwell-style right-click
+    statistics menu (Average / Pk-Pk / Max / Min / RMS) that drops marker lines."""
 
     def __init__(self, x, y, xlabel, ylabel, title, parent=None, series=None):
         super().__init__(parent)
@@ -25,33 +27,74 @@ class ResultPlotDialog(QDialog):
         self.setWindowTitle(title)
         self.resize(720, 460)
         root = QVBoxLayout(self)
-        plot = pg.PlotWidget(background="#0c1830")
+        self.plot = pg.PlotWidget(background="#0c1830")
         for ax in ("bottom", "left"):
-            plot.getAxis(ax).setPen("#5a6b7b"); plot.getAxis(ax).setTextPen("#9fb3c8")
-        plot.setLabel("bottom", xlabel, color="#9fb3c8")
-        plot.setLabel("left", ylabel, color="#9fb3c8")
-        plot.showGrid(x=True, y=True, alpha=0.25)
+            self.plot.getAxis(ax).setPen("#5a6b7b")
+            self.plot.getAxis(ax).setTextPen("#9fb3c8")
+        self.plot.setLabel("bottom", xlabel, color="#9fb3c8")
+        self.plot.setLabel("left", ylabel, color="#9fb3c8")
+        self.plot.showGrid(x=True, y=True, alpha=0.25)
         colors = ["#2bd6ff", "#e6a23c", "#7ee081", "#ff6b6b"]
         multi = len(self.series) > 1
         if multi:
-            plot.addLegend(labelTextColor="#9fb3c8")
+            self.plot.addLegend(labelTextColor="#9fb3c8")
         for i, (lab, yy) in enumerate(self.series):
             kw = dict(pen=pg.mkPen(colors[i % len(colors)], width=2), name=lab)
             if not multi:
                 kw.update(symbol="o", symbolSize=5, symbolBrush="#e6a23c")
-            plot.plot(self.x, yy, **kw)
-        root.addWidget(plot, 1)
-        y0 = self.series[0][1]
-        pk = float(max(yy.max() - yy.min() for _, yy in self.series))
-        info = QLabel(f"pk-pk = {pk:.4g}    mean = {float(y0.mean()):.4g}    "
-                     f"max = {float(y0.max()):.4g}    min = {float(y0.min()):.4g}")
-        root.addWidget(info)
+            self.plot.plot(self.x, yy, **kw)
+        root.addWidget(self.plot, 1)
+        self._stat_lines = {}                # name -> [InfiniteLine,...]
+        self.info = QLabel("")
+        self._refresh_info()
+        root.addWidget(self.info)
+        hint = QLabel("plot 우클릭 → Average / Pk-Pk / Max / Min / RMS 마커")
+        hint.setStyleSheet("color:#6f8093; font-size:10px;")
+        root.addWidget(hint)
         row = QHBoxLayout()
         exp = QPushButton("Export CSV…"); exp.clicked.connect(self._export)
         row.addWidget(exp); row.addStretch(1)
         close = QPushButton("Close"); close.clicked.connect(self.accept)
         row.addWidget(close)
         root.addLayout(row)
+
+    # --- statistics (primary trace) --------------------------------------
+    def _stat(self, name):
+        y = self.series[0][1]
+        return {"Average": float(y.mean()), "Max": float(y.max()),
+                "Min": float(y.min()), "Pk-Pk": float(y.max() - y.min()),
+                "RMS": float(np.sqrt(np.mean(y ** 2)))}[name]
+
+    def _refresh_info(self):
+        y = self.series[0][1]
+        self.info.setText(
+            f"[{self.series[0][0]}]  mean={y.mean():.4g}  pk-pk={y.max()-y.min():.4g}  "
+            f"max={y.max():.4g}  min={y.min():.4g}  rms={np.sqrt(np.mean(y**2)):.4g}")
+
+    def contextMenuEvent(self, ev):
+        m = QMenu(self)
+        for name in ("Average", "Pk-Pk", "Max", "Min", "RMS"):
+            a = m.addAction(name); a.setCheckable(True)
+            a.setChecked(name in self._stat_lines)
+            a.toggled.connect(lambda on, n=name: self._toggle_stat(n, on))
+        m.exec(ev.globalPos())
+
+    def _toggle_stat(self, name, on):
+        for ln in self._stat_lines.pop(name, []):
+            self.plot.removeItem(ln)
+        if not on:
+            return
+        pen = pg.mkPen("#e6a23c", width=1, style=Qt.PenStyle.DashLine)
+        lines = []
+        if name == "Pk-Pk":
+            vals = [("max", self._stat("Max")), ("min", self._stat("Min"))]
+        else:
+            vals = [(name, self._stat(name))]
+        for tag, v in vals:
+            ln = pg.InfiniteLine(pos=v, angle=0, pen=pen, label=f"{tag}={v:.4g}",
+                                 labelOpts={"color": "#e6a23c", "position": 0.05})
+            self.plot.addItem(ln); lines.append(ln)
+        self._stat_lines[name] = lines
 
     def _export(self):
         fn, _ = QFileDialog.getSaveFileName(self, "Export CSV", "result.csv",

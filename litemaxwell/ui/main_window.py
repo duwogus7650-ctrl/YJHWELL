@@ -356,6 +356,8 @@ class MainWindow(QMainWindow):
         g.add_button("Analyze", self.do_analyze, icon="analyze")
         self.btn_nl = g.add_button("Nonlinear (BH)", lambda: None,
                                    checkable=True, icon="mesh")
+        g = t.add_group("Maxwell 2D")
+        g.add_button("Design Settings", self.design_settings, icon="new")
         t.finish()
 
         # Results / Automation (placeholders for later stages)
@@ -1013,6 +1015,16 @@ class MainWindow(QMainWindow):
         item = self.proj_tree.itemAt(pos)
         data = item.data(0, Qt.ItemDataRole.UserRole) if item else None
         m = QMenu(self)
+        txt = item.text(0) if item else ""
+        if txt in ("Results", "Excitations") or txt.startswith("Winding"):
+            rep = m.addMenu("Create Transient Report")
+            rep.addAction("Torque Plot (Rectangular)", self.do_torque_plot)
+            rep.addAction("Load Torque", self.do_load_torque_plot)
+            rep.addAction("Winding Plot — Induced Voltage (Back-EMF)",
+                          self.do_backemf_plot)
+            rep.addAction("Transient — Back-EMF vs Time", self.do_transient_emf)
+            rep.addAction("Core Loss", self.do_core_loss)
+            m.addSeparator()
         m.addAction("Rename Project…", self.rename_project)
         if data and data[0] == "mat":
             mat = data[1]
@@ -1262,6 +1274,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Torque error", str(e)); return
         QApplication.restoreOverrideCursor()
         self.statusBar().clearMessage()
+        tq = tq * self.design.symmetry_mult          # 2D symmetry multiplier
         pk = float(tq.max() - tq.min())
         self.log(f"Torque Plot: pk-pk = {pk:.4g} N·m, mean = {float(tq.mean()):.4g} "
                  f"N·m (무여자 코깅 토크; 권선 전류 인가 시 평균토크 발생)")
@@ -1334,6 +1347,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Load torque error", str(e)); return
         QApplication.restoreOverrideCursor()
         self.statusBar().clearMessage()
+        tq = tq * self.design.symmetry_mult          # 2D symmetry multiplier
         avg = float(tq.mean()); rip = float(tq.max() - tq.min())
         self.log(f"Load Torque: avg ≈ {avg:.3g} N·m, ripple = {rip:.3g} N·m "
                  f"(I_pk={ipk:.3g} A, q축 γ=90°)")
@@ -1388,6 +1402,7 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
             QMessageBox.warning(self, "Core loss error", str(e)); return
         QApplication.restoreOverrideCursor()
+        r = {k: v * self.design.symmetry_mult for k, v in r.items()}  # symmetry mult
         self.log(f"Core Loss @ {f:.1f} Hz: total {r['total']:.3f} W "
                  f"(hyst {r['hyst']:.3f} / eddy {r['eddy']:.3f} / excess {r['excess']:.3f})")
         QMessageBox.information(
@@ -1472,8 +1487,24 @@ class MainWindow(QMainWindow):
         dlg = SolveSetupDialog(self.design.solver, self.design.setup, self)
         if dlg.exec():
             self.design.setup = dlg.values()
+            sf = "single@%gns" % self.design.setup.get("save_time_ns", 0.0)
             self.log(f"Solve Setup '{self.design.setup['name']}' "
-                     f"({self.design.solver})")
+                     f"({self.design.solver}, Save Fields: {sf})")
+            self.refresh_trees()
+
+    def design_settings(self):
+        """Maxwell 2D Design Settings (symmetry multiplier) + Model Depth (L_stk)."""
+        from .setup_dialogs import DesignSettingsDialog
+        depth = self.project.variables.value("L_stk", self.design.model_depth)
+        dlg = DesignSettingsDialog(self.design.symmetry_mult, depth, self)
+        if dlg.exec():
+            v = dlg.values()
+            self.design.symmetry_mult = v["symmetry_mult"]
+            self.design.model_depth = v["model_depth"]
+            self.project.variables.set("L_stk", str(v["model_depth"]))
+            self.props.show_variables(self.project.variables.rows())
+            self.log(f"Design Settings: symmetry ×{v['symmetry_mult']}, "
+                     f"model depth (L_stk) = {v['model_depth']:g} mm")
             self.refresh_trees()
 
     def do_cover_lines(self):

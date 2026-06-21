@@ -125,6 +125,14 @@ class SolveSetupDialog(QDialog):
             f.addRow("Maximum number of passes", self.passes)
             f.addRow("Percent error", self.err)
         tabs.addTab(gen, "General")
+        # --- Save Fields tab (Maxwell: save field at a single point in time) ---
+        sf = QWidget(); sff = QFormLayout(sf)
+        self.save_single = QCheckBox("Save fields at a single point")
+        self.save_single.setChecked(e.get("save_single", True))
+        self.save_time = _spin(0, 1e12, 3, e.get("save_time_ns", 0.0), suffix="ns")
+        sff.addRow(self.save_single)
+        sff.addRow("Time", self.save_time)
+        tabs.addTab(sf, "Save Fields")
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                               | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
@@ -132,9 +140,39 @@ class SolveSetupDialog(QDialog):
 
     def values(self):
         d = {"name": self.name.text(), "enabled": self.enabled.isChecked(),
-             "solver": self.solver}
+             "solver": self.solver,
+             "save_single": self.save_single.isChecked(),
+             "save_time_ns": self.save_time.value()}
         if self.solver == "Transient":
             d["stop"] = self.stop.value(); d["step"] = self.step.value()
         else:
             d["passes"] = self.passes.value(); d["error"] = self.err.value()
         return d
+
+
+class DesignSettingsDialog(QDialog):
+    """Maxwell 2D 'Design Settings' + 'Model Settings': symmetry multiplier and
+    model depth (stack length).  Symmetry multiplier scales reported torque/EMF/
+    loss when only a fraction of the machine is modelled (1 = full model)."""
+
+    def __init__(self, sym_mult=1, depth_mm=28.0, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("2D Design Settings")
+        self.resize(380, 200)
+        root = QVBoxLayout(self)
+        tabs = QTabWidget(); root.addWidget(tabs, 1)
+        d1 = QWidget(); f1 = QFormLayout(d1)
+        self.sym = QSpinBox(); self.sym.setRange(1, 360); self.sym.setValue(int(sym_mult))
+        f1.addRow("Symmetry Multiplier", self.sym)
+        tabs.addTab(d1, "Design Settings")
+        d2 = QWidget(); f2 = QFormLayout(d2)
+        self.depth = _spin(1e-3, 1e5, 4, depth_mm, suffix="mm")
+        f2.addRow("Model Depth (L_stk)", self.depth)
+        tabs.addTab(d2, "Model Settings")
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        root.addWidget(bb)
+
+    def values(self):
+        return {"symmetry_mult": self.sym.value(), "model_depth": self.depth.value()}
