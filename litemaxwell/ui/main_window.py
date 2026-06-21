@@ -314,6 +314,7 @@ class MainWindow(QMainWindow):
         g.add_button("Around Axis", self.do_around_axis, icon="around")
         g.add_button("Along Line", self.do_along_line, icon="along")
         g.add_button("Mirror", self.do_mirror, icon="mirror")
+        g.add_button("Fillet", self.do_fillet, icon="around")
         g = t.add_group("Boolean")
         g.add_button("Unite", self.do_unite, icon="unite")
         g.add_button("Subtract", self.do_subtract, icon="subtract")
@@ -323,7 +324,13 @@ class MainWindow(QMainWindow):
         g.add_button("New", self.new_material, icon="newmat")
         g = t.add_group("Coordinates")
         g.add_button("Relative CS", self.relative_cs_dialog, icon="around")
+        g.add_button("Face CS", self.do_face_cs, icon="around")
         g.add_button("Set Global", self.set_global_cs, icon="fit")
+        g = t.add_group("Select (O/E/V/F)")
+        g.add_button("Object", lambda: self.view.set_select_mode("object"), icon="select")
+        g.add_button("Edge", lambda: self.view.set_select_mode("edge"), icon="select")
+        g.add_button("Vertex", lambda: self.view.set_select_mode("vertex"), icon="select")
+        g.add_button("Face", lambda: self.view.set_select_mode("face"), icon="select")
         t.finish()
 
         # Model
@@ -1125,15 +1132,25 @@ class MainWindow(QMainWindow):
 
     def assign_vector_potential(self):
         from .setup_dialogs import VectorPotentialDialog
+        pk = self.view.picked
+        edge = pk if (pk and pk.get("mode") == "edge") else None
         sel = self.view.selected_shapes()
-        if not sel:
-            self.log("Assign Boundary: 객체/모서리 선택 필요"); return
+        if not sel and not edge:
+            self.log("Assign Boundary: E키로 모서리 선택(또는 객체 선택) 필요"); return
         n = len(self.design.boundaries) + 1
         dlg = VectorPotentialDialog(f"VectorPotential{n}", self)
         if dlg.exec():
-            d = dlg.values(); d["shapes"] = [s.name for s in sel]
+            d = dlg.values()
+            if edge:
+                d["edge"] = {"shape": edge["shape"].name,
+                             "p0": edge["p0"], "p1": edge["p1"]}
+                d["shapes"] = [edge["shape"].name]
+                self.log(f"Boundary '{d['name']}' = {d['value']} Wb/m "
+                         f"→ {edge['shape'].name} 모서리 (E선택)")
+            else:
+                d["shapes"] = [s.name for s in sel]
+                self.log(f"Boundary '{d['name']}' = {d['value']} Wb/m → {len(sel)} obj")
             self.design.boundaries.append(d)
-            self.log(f"Boundary '{d['name']}' = {d['value']} Wb/m")
             self.refresh_trees()
 
     def assign_band(self):
@@ -1542,6 +1559,54 @@ class MainWindow(QMainWindow):
         """Reset the working coordinate system back to Global."""
         self.view.set_wcs()
         self.log("Working CS = Global")
+
+    def do_face_cs(self):
+        """Face CS: create a working CS from the picked face/edge (Maxwell Face CS).
+        Edge pick -> origin at edge midpoint, X axis along the edge; face/object
+        pick -> origin at the body centroid."""
+        import math
+        pk = self.view.picked
+        if not pk:
+            self.log("Face CS: F(면) 또는 E(모서리)로 먼저 선택하세요."); return
+        if pk["mode"] == "edge":
+            (x0, y0), (x1, y1) = pk["p0"], pk["p1"]
+            ox, oy = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
+            rot = math.degrees(math.atan2(y1 - y0, x1 - x0))
+        else:
+            c = pk["shape"].geom.representative_point()
+            ox, oy, rot = c.x, c.y, 0.0
+        n = len(self.design.coord_systems) + 1
+        name = f"FaceCS{n}"
+        self.view.set_wcs(name, ox, oy, rot)
+        self.design.coord_systems = [c for c in self.design.coord_systems
+                                     if c["name"] != name]
+        self.design.coord_systems.append({"name": name, "ox": ox, "oy": oy, "rot": rot})
+        self.refresh_trees()
+        self.log(f"{name} @ ({ox:.2f},{oy:.2f}) rot {rot:.1f}° — 피킹 기준 좌표계")
+
+    def do_fillet(self):
+        """Fillet the picked vertex's corner (Maxwell: round magnet ends).
+        Default radius = the MagnetR design variable."""
+        from ..model.geometry import fillet_corner
+        pk = self.view.picked
+        if not pk or pk.get("mode") != "vertex":
+            self.log("Fillet: V키로 꼭짓점을 먼저 선택하세요."); return
+        shape = pk["shape"]
+        default_r = self.project.variables.value("MagnetR", 1.0) or 1.0
+        r, ok = _QInputDialog.getDouble(self, "Fillet", "Radius [mm]:",
+                                        float(default_r), 0.001, 1e4, 3)
+        if not ok:
+            return
+        self._snapshot()
+        new = fillet_corner(shape, pk["x"], pk["y"], r)
+        if shape in self.design.shapes:
+            self.design.shapes[self.design.shapes.index(shape)] = new
+        it = self.view.item_for(shape)
+        if it:
+            it.shape = new; it.rebuild()
+        self.view._clear_pick()
+        self.refresh_trees()
+        self.log(f"Filleted {new.name} corner (r={r:g} mm)")
 
     def do_around_axis(self):
         sel = self.view.selected_shapes()

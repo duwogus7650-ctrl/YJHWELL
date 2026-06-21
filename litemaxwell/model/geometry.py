@@ -127,6 +127,53 @@ class CoordSystem:
         return self.ox == 0.0 and self.oy == 0.0 and self.rot_deg == 0.0
 
 
+def fillet_corner(shape: "Shape", vx: float, vy: float, radius: float,
+                  seg: int = 12) -> "Shape":
+    """Round the polygon corner nearest (vx,vy) with the given fillet radius
+    (Maxwell: Fillet on magnet end vertices).  Returns a new filleted Shape."""
+    polys = shape.polygons()
+    if not polys:
+        return shape
+    poly = polys[0]
+    ring = list(poly.exterior.coords)[:-1]      # drop closing dup
+    n = len(ring)
+    if n < 3:
+        return shape
+    # nearest vertex index
+    k = min(range(n), key=lambda i: (ring[i][0] - vx) ** 2 + (ring[i][1] - vy) ** 2)
+    A = np.array(ring[(k - 1) % n]); V = np.array(ring[k]); B = np.array(ring[(k + 1) % n])
+    u1 = A - V; u2 = B - V
+    l1 = np.hypot(*u1); l2 = np.hypot(*u2)
+    if l1 < 1e-9 or l2 < 1e-9:
+        return shape
+    u1 /= l1; u2 /= l2
+    half = math.acos(max(-1.0, min(1.0, float(np.dot(u1, u2))))) / 2.0
+    if half < 1e-6 or abs(half - math.pi / 2) > math.pi / 2:
+        return shape
+    setback = radius / math.tan(half)           # distance from V along each edge
+    setback = min(setback, 0.49 * l1, 0.49 * l2)
+    r = setback * math.tan(half)
+    t1 = V + u1 * setback; t2 = V + u2 * setback
+    bis = (u1 + u2); bis = bis / (np.hypot(*bis) + 1e-12)
+    center = V + bis * (r / math.sin(half))
+    a1 = math.atan2(t1[1] - center[1], t1[0] - center[0])
+    a2 = math.atan2(t2[1] - center[1], t2[0] - center[0])
+    # sweep the short way
+    da = a2 - a1
+    while da <= -math.pi:
+        da += 2 * math.pi
+    while da > math.pi:
+        da -= 2 * math.pi
+    arc = [(center[0] + r * math.cos(a1 + da * i / seg),
+            center[1] + r * math.sin(a1 + da * i / seg)) for i in range(seg + 1)]
+    new_ring = ring[:k] + arc + ring[k + 1:]
+    s = Shape(shape.name, Polygon(new_ring), material=shape.material,
+              color=shape.color)
+    s.cmd = {"kind": "Fillet", "base": shape.cmd, "vx": vx, "vy": vy,
+             "radius": radius}
+    return s
+
+
 # --- boolean operations --------------------------------------------------
 
 def _operand_cmd(s: "Shape") -> dict:

@@ -13,7 +13,20 @@ from PyQt6.QtGui import (QPainter, QPen, QBrush, QColor, QPainterPath,
 from PyQt6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPathItem,
                              QGraphicsLineItem)
 
+from shapely.geometry import Point as _SPoint
+
 from ..model.geometry import Shape, CoordSystem
+
+
+def _seg_dist(px, py, x0, y0, x1, y1):
+    """Distance from point (px,py) to the segment (x0,y0)-(x1,y1)."""
+    dx, dy = x1 - x0, y1 - y0
+    L2 = dx * dx + dy * dy
+    if L2 < 1e-12:
+        return ((px - x0) ** 2 + (py - y0) ** 2) ** 0.5
+    t = max(0.0, min(1.0, ((px - x0) * dx + (py - y0) * dy) / L2))
+    cx, cy = x0 + t * dx, y0 + t * dy
+    return ((px - cx) ** 2 + (py - cy) ** 2) ** 0.5
 
 def _jet(t: float) -> QColor:
     """Jet-style colormap (blue->cyan->green->yellow->red) for t in [0,1]."""
@@ -88,6 +101,7 @@ class ModelerView(QGraphicsView):
     shapeCreated = pyqtSignal(object)        # emits Shape
     coordMoved = pyqtSignal(float, float)
     promptChanged = pyqtSignal(str)          # draw-step hint for status bar
+    subPicked = pyqtSignal(str, object)      # ('object'|'face'|'edge'|'vertex', payload)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -123,6 +137,9 @@ class ModelerView(QGraphicsView):
         self.field = None
         self.show_field = False
         self.snap = False
+        self.select_mode = "object"        # object | face | edge | vertex (O/E/V/F)
+        self.picked = None                 # last sub-entity pick (dict)
+        self._pick_items = []              # highlight graphics for the pick
         self.wcs = CoordSystem()           # active working coordinate system
         self._cs_items: list = []          # the CS triad graphics
         self._osnap = True                 # object snap to existing vertices
@@ -232,6 +249,99 @@ class ModelerView(QGraphicsView):
         self._snap_marker = None
         self.viewport().update()
 
+    # --- selection modes (Maxwell O=object E=edge V=vertex F=face) --------
+    def _pick_thr(self):
+        m = abs(self.transform().m11()) or 1.0
+        return 10.0 / m                       # ~10 px tolerance in scene units
+
+    def set_select_mode(self, mode):
+        self.set_tool("select")
+        self.select_mode = mode
+        self._clear_pick()
+        lbl = {"object": "Object (O)", "face": "Face (F)",
+               "edge": "Edge (E)", "vertex": "Vertex (V)"}.get(mode, mode)
+        self.promptChanged.emit(f"Select mode: {lbl}")
+
+    def _clear_pick(self):
+        for it in self._pick_items:
+            self._scene.removeItem(it)
+        self._pick_items = []
+        self.picked = None
+
+    def _shape_at(self, p):
+        best, ba = None, None
+        sp = _SPoint(p.x(), p.y())
+        for it in self._items:
+            s = it.shape
+            if s.is_closed and not s.geom.is_empty and s.geom.contains(sp):
+                if ba is None or s.area < ba:
+                    ba, best = s.area, s
+        return best
+
+    def _pick_vertex(self, p):
+        v, _ = self._nearest_vertex(p, self._pick_thr())
+        if v is None:
+            return None
+        owner = None
+        for it in self._items:
+            for ring in it.shape.rings():
+                if any(abs(x - v[0]) < 1e-6 and abs(y - v[1]) < 1e-6 for x, y in ring):
+                    owner = it.shape; break
+            if owner:
+                break
+        return {"shape": owner, "x": v[0], "y": v[1]}
+
+    def _pick_edge(self, p):
+        px, py = p.x(), p.y(); bd = self._pick_thr(); best = None
+        for it in self._items:
+            for ring in it.shape.rings():
+                r = list(ring)
+                for i in range(len(r) - 1):
+                    d = _seg_dist(px, py, r[i][0], r[i][1], r[i + 1][0], r[i + 1][1])
+                    if d < bd:
+                        bd = d
+                        best = {"shape": it.shape,
+                                "p0": (float(r[i][0]), float(r[i][1])),
+                                "p1": (float(r[i + 1][0]), float(r[i + 1][1]))}
+        return best
+
+    def _do_pick(self, p):
+        mode = self.select_mode
+        if mode == "vertex":
+            pk = self._pick_vertex(p)
+        elif mode == "edge":
+            pk = self._pick_edge(p)
+        elif mode == "face":
+            s = self._shape_at(p); pk = {"shape": s} if s else None
+        else:
+            pk = None
+        self._clear_pick()
+        if not pk or not pk.get("shape"):
+            self.promptChanged.emit(f"Select mode: {mode} — nothing here")
+            return
+        self.picked = dict(pk, mode=mode)
+        self._show_pick()
+        self.subPicked.emit(mode, self.picked)
+
+    def _show_pick(self):
+        pk = self.picked; mode = pk["mode"]
+        if mode == "vertex":
+            r = self._pick_thr() * 0.6; x, y = pk["x"], pk["y"]
+            it = self._scene.addRect(x - r, y - r, 2 * r, 2 * r,
+                                     QPen(QColor("#ffb020"), 0),
+                                     QBrush(QColor("#ffb020")))
+            it.setZValue(950); self._pick_items.append(it)
+        elif mode == "edge":
+            (x0, y0), (x1, y1) = pk["p0"], pk["p1"]
+            ln = QGraphicsLineItem(x0, y0, x1, y1)
+            pen = QPen(QColor("#ffb020")); pen.setWidthF(self._pick_thr() * 0.5)
+            ln.setPen(pen); ln.setZValue(950)
+            self._scene.addItem(ln); self._pick_items.append(ln)
+        elif mode == "face":
+            it = self.item_for(pk["shape"])
+            if it:
+                it.setSelected(True)
+
     # --- public API ------------------------------------------------------
     def set_tool(self, tool: str) -> None:
         self.tool = tool
@@ -327,6 +437,10 @@ class ModelerView(QGraphicsView):
             super().mousePressEvent(fake)
             return
         if self.tool == "select":
+            if (self.select_mode != "object"
+                    and e.button() == Qt.MouseButton.LeftButton):
+                self._do_pick(self.mapToScene(e.position().toPoint()))
+                return
             super().mousePressEvent(e)
             return
         if self.tool in ("circle", "rect"):
@@ -405,8 +519,17 @@ class ModelerView(QGraphicsView):
             super().mouseDoubleClickEvent(e)
 
     def keyPressEvent(self, e):
-        if e.key() == Qt.Key.Key_Escape:
-            self._cancel_draw()
+        k = e.key()
+        if k == Qt.Key.Key_Escape:
+            self._cancel_draw(); self.set_select_mode("object")
+        elif k == Qt.Key.Key_O:
+            self.set_select_mode("object")
+        elif k == Qt.Key.Key_E:
+            self.set_select_mode("edge")
+        elif k == Qt.Key.Key_V:
+            self.set_select_mode("vertex")
+        elif k == Qt.Key.Key_F:
+            self.set_select_mode("face")
         super().keyPressEvent(e)
 
     # --- drawing helpers -------------------------------------------------
