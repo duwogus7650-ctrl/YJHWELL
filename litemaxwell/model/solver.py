@@ -209,6 +209,52 @@ def torque_stress(field, r_gap_mm, L_stk_m, dr_mm=1.2):
     return float(L_stk_m / MU0 / (2 * dr) * contrib[band].sum())
 
 
+def _gap_bounds(shapes, materials):
+    """Air-gap annulus (r_in_mm, r_out_mm) = (outer radius of the rotor/magnet
+    side) .. (inner radius of the stator). Returns None if undetermined."""
+    mag_out = 0.0; stat_in = 1e30
+    for s in shapes:
+        rings = list(s.rings())
+        if not rings:
+            continue
+        rr = np.concatenate([np.hypot(rg[:, 0], rg[:, 1]) for rg in rings])
+        m = materials.get(s.material)
+        nm = s.name.lower()
+        if (m and getattr(m, "is_magnet", False)) or nm.startswith(("rotor", "magnet")):
+            mag_out = max(mag_out, float(rr.max()))
+        elif nm.startswith("stator"):
+            stat_in = min(stat_in, float(rr.min()))
+    if mag_out <= 0.0 or stat_in >= 1e30 or stat_in <= mag_out:
+        return None
+    return mag_out, stat_in
+
+
+def torque_arkkio(field, r_in_mm, r_out_mm, L_stk_m):
+    """Arkkio's air-gap torque — a VOLUME integral of the Maxwell stress over the
+    whole gap annulus (r_in..r_out), far more mesh-robust than a thin contour and
+    free of the band-width sensitivity (the band must stay inside the air gap).
+
+        T = L/(mu0*(ro-ri)) * integral_gap( r * Br * Btheta ) dA   [N*m]
+    """
+    nodes = field.nodes; tris = field.triangles
+    P = nodes[tris] * 1e-3
+    cm = P.mean(axis=1)
+    r = np.hypot(cm[:, 0], cm[:, 1])
+    twoA = ((P[:, 1, 0] - P[:, 0, 0]) * (P[:, 2, 1] - P[:, 0, 1])
+            - (P[:, 2, 0] - P[:, 0, 0]) * (P[:, 1, 1] - P[:, 0, 1]))
+    Ael = 0.5 * np.abs(twoA)
+    ri = r_in_mm * 1e-3; ro = r_out_mm * 1e-3
+    band = (r >= ri) & (r <= ro)
+    if ro <= ri or not band.any():
+        return 0.0
+    rs = np.where(r > 0, r, 1.0)
+    rhx, rhy = cm[:, 0] / rs, cm[:, 1] / rs
+    Br = field.B[:, 0] * rhx + field.B[:, 1] * rhy
+    Bth = -field.B[:, 0] * rhy + field.B[:, 1] * rhx
+    integ = (r * Br * Bth * Ael)[band].sum()
+    return float(L_stk_m / (MU0 * (ro - ri)) * integ)
+
+
 def rotor_sweep(shapes, materials, n_pole=10, n_steps=19, span_deg=None,
                 L_stk_m=0.028, r_gap_mm=25.0, mesh_area=6.0, progress=None):
     """Torque vs rotor position.  The mesh is built ONCE (coarse) and the magnet
@@ -218,12 +264,14 @@ def rotor_sweep(shapes, materials, n_pole=10, n_steps=19, span_deg=None,
     if span_deg is None:
         span_deg = 360.0 / max(n_pole, 1)            # one pole pitch (mech)
     mesh = generate(shapes, max_area=mesh_area)
+    gb = _gap_bounds(shapes, materials)
     angles = np.linspace(0.0, span_deg, n_steps)
     torques = np.zeros(n_steps)
     for i, th in enumerate(angles):
         f = solve_magnetostatic(mesh, shapes, materials, None,
                                 n_pole=n_pole, rotor_angle_deg=th)
-        torques[i] = torque_stress(f, r_gap_mm, L_stk_m)
+        torques[i] = (torque_arkkio(f, gb[0], gb[1], L_stk_m) if gb
+                      else torque_stress(f, r_gap_mm, L_stk_m))
         if progress:
             progress(i + 1, n_steps)
     return angles, torques
@@ -328,6 +376,7 @@ def load_torque_sweep(shapes, materials, n_pole=10, n_steps=19, L_stk_m=0.028,
     pmap = phase_map(shapes, n_pole)
     if mesh is None:
         mesh = generate(shapes, max_area=mesh_area)
+    gb = _gap_bounds(shapes, materials)
     span = 720.0 / max(n_pole, 1)
     angles = np.linspace(0.0, span, n_steps)
     tq = np.zeros(n_steps)
@@ -343,10 +392,16 @@ def load_torque_sweep(shapes, materials, n_pole=10, n_steps=19, L_stk_m=0.028,
                 coil_currents[si] = coil_currents.get(si, 0.0) + turns * w * iabc[ph]
         f = solve_magnetostatic(mesh, shapes, materials, None, n_pole=n_pole,
                                 rotor_angle_deg=th, coil_currents=coil_currents)
-        tq[i] = torque_stress(f, r_gap_mm, L_stk_m)
+        tq[i] = (torque_arkkio(f, gb[0], gb[1], L_stk_m) if gb
+                 else torque_stress(f, r_gap_mm, L_stk_m))
         if progress:
             progress(i + 1, n_steps)
-    return angles, tq
+    # The quasi-static position sweep carries no intrinsic rotation direction, so
+    # the raw Maxwell-stress sign is arbitrary. Flip it so the synchronised
+    # q-axis current (gamma=90deg) yields POSITIVE motoring torque — the standard
+    # PMSM convention, matching Maxwell's reported +T. (Cogging is reported as
+    # pk-pk, so its sign is irrelevant and left untouched.)
+    return angles, -tq
 
 
 def electrical_freq(base_rpm, n_pole):
