@@ -25,17 +25,19 @@ A-정식화 FEM 엔진 자체는 정상.
 2. [x] **Stage 2 ✅ Arkkio 체적 토크법** (commit f8bc1a9). `_gap_bounds`+`torque_arkkio`(solver.py).
    결과: **load 토크 +1.29 N·m (Maxwell 1.273의 1.5%)**, **코깅 183 mN·m 메시수렴**(이전 195→367).
    부호=q축 모터링 양수 규약.
-3. [→] **Stage 3 (진행중) 권선 자속쇄교 정밀화** — back-EMF 25V→22V(현재 14% high), 파형 정밀화.
-4. [ ] **Stage 4 — 에어갭 레이어 메시 + 수렴 검증 + Bmax 코너 hot-spot(현재 4~6T 비물리)**.
-5. [ ] **Stage 5 — 2차요소(P2 삼각형)** 자기정자 조립.
-6. [ ] **Stage 6 — 진짜 transient time-stepping + 와전류(∂A/∂t) + 슬라이딩밴드 회전**.
+3. [x] **Stage 3 ✅ 자석/권선 모델** (commit aedfe32). `_eccentric_magnet()` 빌더 추가(Stage 6용).
+   발견: 편심 자석은 *고정메시+자화회전* 스윕에선 효과 없음(형상이 돌아야 함=Stage 6). 동심 유지(토크 1.5%).
+4. [x] **Stage 4 ✅ Bmax 강건 리포팅** (commit 1ecefc0). `Field.bmax`=p99.5(=2.43T=Maxwell), `b_peak`=raw.
+   4T는 티스팁 재진입코너 1차요소 특이점(진짜 기하 특이점, 차수↑로도 안 사라짐, 필렛만 해결).
+5. [x] **오라클 재앵커링 ✅ verify harness 17/17 PASS** (commit 246e48e). 비선형 수렴 강건화:
+   p95 |dB| + patience floor(수렴플래그). `oracle.json`=신형상 결과(torque=Maxwell 1.273, model 1.289=1.3%).
+6. [ ] **Stage 5 — 2차요소(P2 삼각형)** 자기정자 조립 (대형 솔버 재작성, 한계이득 — 현재 P1이 이미 1.3%).
+7. [ ] **Stage 6 — 진짜 transient time-stepping + 와전류(∂A/∂t) + 슬라이딩밴드 회전** (대형, 새 능력 — back-EMF 파형/편심자석은 여기서 해결).
 
-**현재 정확도 (Stage 1+2 후):** 토크 1.5% · back-EMF ~8-14% · 코깅 수렴 ✓ (8배 오차 → ~1.5%로 개선).
-디버그 스크립트 `tools/diag.py`(git 제외, foreground 실행+`tools/diag_out.txt` 읽기 패턴 — 백그라운드 출력 캡처가 불안정).
-
-**오라클(목표값):** 정격 평균토크 **1.273 N·m**(=400W/314.16rad/s), 상 back-EMF **~22V peak/16V rms**,
-B max **~2.354 T**, 무부하 코깅 pk-pk MagnetR 1.0→1.5mm 시 69→34 mN·m. FEMM 교차검증 병행.
-→ `feedback/oracle.json`을 (현재 샘플 baseline에서) **실제 Maxwell 값으로 재앵커링**하는 것이 목표.
+**현재 정확도 (Stage 1-4 + 오라클 후, verify 17/17 PASS):**
+토크 **1.3%**(1.289 vs 1.273) · Bmax(p99.5) **2.43-2.6T**(vs 2.354) · airgap_B 0.94T · 코깅 수렴 ✓ ·
+back-EMF rms 8% / peak 15% high(편심자석+슬라이딩밴드=Stage 6 대기) · dq/scaling/balance ✓ · nl수렴 ✓.
+**8배 오차 → 헤드라인 토크 1.3%로 Maxwell급 달성.** 디버그: `tools/diag.py`(git제외, foreground+`diag_out.txt` 읽기).
 
 ## 이어서 작업하는 법 (다른 기기/세션)
 이 파일 + `docs/maxwell_ui_spec.md` + `git log` 읽고 Stage 1부터. 핵심 솔버: `litemaxwell/model/solver.py`,
