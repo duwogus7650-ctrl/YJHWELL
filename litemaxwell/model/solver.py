@@ -433,10 +433,19 @@ def _current_density(shapes, excitations):
     for ex in excitations or []:
         if ex.get("type") != "Current":
             continue
+        # Winding/Coil excitations carry a symbolic current expression, not a
+        # plain DC amplitude — the 3-phase MMF is injected by load_torque_sweep
+        # via coil_currents instead, so skip them here. Also skip any entry
+        # without a numeric 'value'.
+        if ex.get("kind") in ("winding", "coil"):
+            continue
+        val = ex.get("value")
+        if not isinstance(val, (int, float)):
+            continue
         for nm in ex.get("shapes", []):
             if nm in area:
                 # value [A] over the coil area (mm^2) -> A/m^2
-                out[nm] = ex["value"] / (area[nm] * 1e-6)
+                out[nm] = val / (area[nm] * 1e-6)
     return out
 
 
