@@ -61,7 +61,7 @@ def _tri_grads(p0, p1, p2):
 def solve_magnetostatic(mesh, shapes, materials, excitations=None,
                         n_pole=10, rotor_angle_deg=0.0, coil_currents=None,
                         nonlinear=False, max_nl_iter=60, nl_tol=4e-3,
-                        nl_relax=0.3) -> Field:
+                        nl_relax=0.3, order=1) -> Field:
     """Run the FEM solve.  Returns a Field (Az, B per element).
 
     rotor_angle_deg rotates the magnet pole pattern around the ring (used by
@@ -135,37 +135,68 @@ def solve_magnetostatic(mesh, shapes, materials, excitations=None,
             area_m2 = max(shapes[si].area, 1e-9) * 1e-6
             Jz[tag == si] = amp_turns / area_m2
 
-    # --- boundary (Az=0 on outer edge) --------------------------------
-    bnd = _boundary_nodes(tris)
-    free = np.ones(N, bool)
-    if bnd:
-        free[np.fromiter(bnd, int)] = False
-    fidx = np.where(free)[0]
-    ri = np.repeat(tris, 3, axis=1).reshape(M, 3, 3)
-    ci = np.tile(tris, 3).reshape(M, 3, 3)
+    # --- assembly: P1 (linear/CST) or P2 (quadratic) elements ---------
+    if order == 2:
+        from .fem_p2 import p2_build, p2_stiffness, p2_centroid_grad
+        p2_xy, p2_tris, n_p1, bnd_mask = p2_build(nodes, tris)
+        Np2 = len(p2_xy)
+        Ke0 = p2_stiffness(bx, cx, twoA, A)          # (M,6,6) integral grad.grad
+        gN_c = p2_centroid_grad(bx, cx, twoA)        # (M,6,2) grad Nk at centroid
+        fidx = np.where(~bnd_mask)[0]
+        RI = np.repeat(p2_tris, 6, axis=1).reshape(M, 6, 6)
+        CI = np.tile(p2_tris, 6).reshape(M, 6, 6)
 
-    def _solve(nu):
-        fac = nu / (4.0 * A)
-        ke = fac[:, None, None] * (bx[:, :, None] * bx[:, None, :]
-                                   + cx[:, :, None] * cx[:, None, :])
-        K = sp.coo_matrix((ke.ravel(), (ri.ravel(), ci.ravel()),),
-                          shape=(N, N)).tocsr()
-        rhs = np.zeros(N)
-        if Jz.any():
-            np.add.at(rhs, tris, (Jz * A / 3.0)[:, None])
-        if Brx is not None:                          # magnet term scales with nu
-            term = (nu / 2.0)[:, None] * (Brx[:, None] * cx - Bry[:, None] * bx)
-            np.add.at(rhs, tris, term)
-        Az = np.zeros(N)
-        if len(fidx):
-            Az[fidx] = spla.spsolve(K[fidx][:, fidx].tocsc(), rhs[fidx])
-        return Az
+        def _solve(nu):
+            ke = nu[:, None, None] * Ke0
+            K = sp.coo_matrix((ke.ravel(), (RI.ravel(), CI.ravel())),
+                              shape=(Np2, Np2)).tocsr()
+            rhs = np.zeros(Np2)
+            if Jz.any():                              # uniform Jz loads edge nodes
+                np.add.at(rhs, p2_tris[:, 3:6], (Jz * A / 3.0)[:, None])
+            if Brx is not None:                       # magnetisation (centroid rule)
+                term = (nu * A)[:, None] * (Brx[:, None] * gN_c[:, :, 1]
+                                            - Bry[:, None] * gN_c[:, :, 0])
+                np.add.at(rhs, p2_tris, term)
+            Az = np.zeros(Np2)
+            if len(fidx):
+                Az[fidx] = spla.spsolve(K[fidx][:, fidx].tocsc(), rhs[fidx])
+            return Az
 
-    def _bfield(Az):
-        az = Az[tris]
-        Bx = (az * cx).sum(axis=1) / twoA
-        By = -(az * bx).sum(axis=1) / twoA
-        return Bx, By, np.hypot(Bx, By)
+        def _bfield(Az):                              # B linear in P2 -> centroid
+            grad = np.einsum("ek,eka->ea", Az[p2_tris], gN_c)
+            Bx = grad[:, 1]; By = -grad[:, 0]
+            return Bx, By, np.hypot(Bx, By)
+    else:
+        bnd = _boundary_nodes(tris)
+        free = np.ones(N, bool)
+        if bnd:
+            free[np.fromiter(bnd, int)] = False
+        fidx = np.where(free)[0]
+        ri = np.repeat(tris, 3, axis=1).reshape(M, 3, 3)
+        ci = np.tile(tris, 3).reshape(M, 3, 3)
+
+        def _solve(nu):
+            fac = nu / (4.0 * A)
+            ke = fac[:, None, None] * (bx[:, :, None] * bx[:, None, :]
+                                       + cx[:, :, None] * cx[:, None, :])
+            K = sp.coo_matrix((ke.ravel(), (ri.ravel(), ci.ravel()),),
+                              shape=(N, N)).tocsr()
+            rhs = np.zeros(N)
+            if Jz.any():
+                np.add.at(rhs, tris, (Jz * A / 3.0)[:, None])
+            if Brx is not None:                      # magnet term scales with nu
+                term = (nu / 2.0)[:, None] * (Brx[:, None] * cx - Bry[:, None] * bx)
+                np.add.at(rhs, tris, term)
+            Az = np.zeros(N)
+            if len(fidx):
+                Az[fidx] = spla.spsolve(K[fidx][:, fidx].tocsc(), rhs[fidx])
+            return Az
+
+        def _bfield(Az):
+            az = Az[tris]
+            Bx = (az * cx).sum(axis=1) / twoA
+            By = -(az * bx).sum(axis=1) / twoA
+            return Bx, By, np.hypot(Bx, By)
 
     nu = 1.0 / (MU0 * mur0)
     Az = _solve(nu)
@@ -220,6 +251,10 @@ def solve_magnetostatic(mesh, shapes, materials, excitations=None,
                     break
 
     B = np.stack([Bx, By], axis=1)
+    # P2 carries edge-midpoint dofs too; expose Az at the P1 vertices only so the
+    # Field (and flux_linkage / overlay, indexed by the P1 mesh) stay compatible.
+    if order == 2:
+        Az = Az[:N]
     return Field(nodes_mm, tris, Az, B, Bmag, iters=int(iters),
                  converged=converged)
 
