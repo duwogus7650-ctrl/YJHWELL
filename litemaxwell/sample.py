@@ -65,12 +65,41 @@ def _wedge(r0, r1, a0_deg, a1_deg):
     return Polygon(_arc(r1, a0_deg, a1_deg) + _arc(r0, a0_deg, a1_deg)[::-1])
 
 
+def _eccentric_magnet(r_in, r_arc, offset, phi_c_deg, half_deg):
+    """Bread-loaf surface magnet (Maxwell 'Magnet_R_Offset' eccentric pole).
+
+    Inner face = concentric arc at r_in (grid-aligned -> shares the rotor rim,
+    stays conformal). Outer face = an arc of radius r_arc whose centre is offset
+    by `offset` along the pole axis, so the magnet is thickest (air gap smallest)
+    at the pole centre and recedes toward the edges -> a near-sinusoidal air-gap
+    flux, which de-peaks the back-EMF. Sides are radial (same machine angle at
+    inner and outer), so the verified design relation
+        theta_two = asin(r_in*sin(theta_one)/r_arc)
+    is reproduced. At the pole centre the outer face reaches offset+r_arc."""
+    i0 = round((phi_c_deg - half_deg) / 360.0 * _NDIV)
+    i1 = round((phi_c_deg + half_deg) / 360.0 * _NDIV)
+    pc = math.radians(phi_c_deg)
+    ox, oy = offset * math.cos(pc), offset * math.sin(pc)
+    inner, outer = [], []
+    for i in range(i0, i1 + 1):
+        a = 2.0 * math.pi * i / _NDIV
+        ca, sa = math.cos(a), math.sin(a)
+        inner.append((r_in * ca, r_in * sa))
+        b = ca * ox + sa * oy                      # ray.center projection
+        disc = b * b - (ox * ox + oy * oy - r_arc * r_arc)
+        t = b + math.sqrt(max(disc, 0.0))          # outer ray∩arc radius
+        outer.append((t * ca, t * sa))
+    return Polygon(inner + outer[::-1])
+
+
 def build_motor(poles: int = 10, slots: int = 12) -> list[Shape]:
     # --- 400W 10P12S SPM spec (mm) ------------------------------------
     R_mag_out = 26.8                       # D_ro/2  (magnet outer = gap-facing)
     T_m       = 2.9
     R_mag_in  = R_mag_out - T_m            # 23.9
     theta_one = 16.02                      # half magnet arc  (a_m*180/poles)
+    R_mag_off = 10.0                       # Magnet_R_Offset (bread-loaf eccentricity)
+    R_mag_arc = R_mag_out - R_mag_off      # 16.8 outer-arc radius (verified vs theta_two)
     g         = 0.5
     R_si      = R_mag_out + g              # 27.3   (= D_si/2, stator bore)
     R_so      = 41.15                      # D_so/2
@@ -95,6 +124,10 @@ def build_motor(poles: int = 10, slots: int = 12) -> list[Shape]:
     pitch_m = 360.0 / poles
     for k in range(poles):
         c = pitch_m * (k + 0.5)
+        # Concentric magnet under the current fixed-mesh / rotated-magnetization
+        # sweep: the eccentric (_eccentric_magnet) bread-loaf only sinusoidalises
+        # the gap when the ROTOR GEOMETRY rotates, which arrives with the Stage-6
+        # sliding band. Until then concentric is the faithful model (torque 1.5%).
         seg = _wedge(R_mag_in, R_mag_out, c - theta_one, c + theta_one)
         if seg.is_empty:
             continue

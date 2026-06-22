@@ -39,3 +39,8 @@ Thumbs.db
 .vscode/
 .idea/
 tools/diag_out.txt
+
+# scratch debug scripts
+tools/diag.py
+tools/diag_out.txt
+tools/diag_run.txt
