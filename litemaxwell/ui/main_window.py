@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self._view_menu)
         self.view.promptChanged.connect(self._on_prompt)
+        self.view.on_view_context = self.set_view_context   # Time= overlay dbl-click
         self.view.viewport().installEventFilter(self)
 
         self._build_menu()
@@ -315,9 +316,12 @@ class MainWindow(QMainWindow):
         g.add_button("Along Line", self.do_along_line, icon="along")
         g.add_button("Mirror", self.do_mirror, icon="mirror")
         g.add_button("Fillet", self.do_fillet, icon="around")
+        g.add_button("Chamfer", self.do_chamfer, icon="around")
         g = t.add_group("Boolean")
         g.add_button("Unite", self.do_unite, icon="unite")
         g.add_button("Subtract", self.do_subtract, icon="subtract")
+        g.add_button("Intersect", self.do_intersect, icon="unite")
+        g.add_button("Split", self.do_split, icon="subtract")
         g = t.add_group("Material")
         g.add_button("Assign", self.assign_material_dialog, icon="material")
         g.add_button("Edit", self.edit_selected_material, icon="editmat")
@@ -510,8 +514,18 @@ class MainWindow(QMainWindow):
         root = QTreeWidgetItem([self.project.name + "*"])
         root.setData(0, Qt.ItemDataRole.UserRole, ("project", None))
         self.proj_tree.addTopLevelItem(root)
-        d = QTreeWidgetItem([f"{self.design.name} ({self.design.solver}, XY)*"])
-        root.addChild(d)
+        # all designs under the project; the active one is bold and gets the
+        # full child tree (Maxwell shows NoLoad / RatedLoad / … side by side).
+        d = None
+        for di, design in enumerate(self.project.designs):
+            active = di == self.project.active_index
+            lbl = f"{design.name} ({design.solver}, XY)" + ("*" if active else "")
+            dnode = QTreeWidgetItem([lbl])
+            dnode.setData(0, Qt.ItemDataRole.UserRole, ("design", di))
+            if active:
+                fnt = dnode.font(0); fnt.setBold(True); dnode.setFont(0, fnt)
+                d = dnode
+            root.addChild(dnode)
         des = self.design
         for node in DESIGN_NODES:
             it = QTreeWidgetItem([node]); d.addChild(it)
@@ -699,6 +713,8 @@ class MainWindow(QMainWindow):
             return
         if data[0] == "mat":
             self.edit_material(data[1])
+        elif data[0] == "design":
+            self.switch_design(data[1])
         elif data[0] == "opcmd":
             self._edit_operand(*data[1])
         elif data[0] == "seg":
@@ -952,12 +968,22 @@ class MainWindow(QMainWindow):
                 m.addAction("Cover Lines", self.do_cover_lines)
             m.addAction("Assign Material…", self.assign_material_dialog)
             ex = m.addMenu("Assign Excitation")
+            ex.addAction("Coil…", self.assign_coil_excitation)
             ex.addAction("Current…", self.assign_current)
+            ex.addAction("Add Winding…", self.assign_winding)
+            ex.addSeparator()
+            ex.addAction("Set Eddy Effects…", self.set_eddy_effects)
+            ex.addAction("Set Core Loss…", self.set_core_loss)
             bn = m.addMenu("Assign Boundary")
             bn.addAction("Vector Potential…", self.assign_vector_potential)
             m.addAction("Assign Band (Motion)…", self.assign_band)
             mo = m.addMenu("Assign Mesh Operation")
-            mo.addAction("Length Based…", self.assign_mesh_op)
+            mo.addAction("Inside Selection › Length Based…", self.assign_mesh_op)
+            fld = m.addMenu("Fields")
+            bsub = fld.addMenu("B")
+            bsub.addAction("Mag_B", lambda: self.do_field_plot("Mag_B"))
+            bsub.addAction("B_Vector", lambda: self.do_field_plot("B_Vector"))
+            fld.addAction("H › Mag_H", lambda: self.do_field_plot("Mag_H"))
             m.addAction("Properties…", lambda: self._open_properties(sel[0], "Command"))
             m.addSeparator()
             m.addAction("Duplicate Around Axis…", self.do_around_axis)
@@ -1018,14 +1044,23 @@ class MainWindow(QMainWindow):
         txt = item.text(0) if item else ""
         if txt in ("Results", "Excitations") or txt.startswith("Winding"):
             rep = m.addMenu("Create Transient Report")
+            rep.addAction("New Trace…  (Category › Quantity)", self.new_report_trace)
+            rep.addSeparator()
             rep.addAction("Torque Plot (Rectangular)", self.do_torque_plot)
             rep.addAction("Load Torque", self.do_load_torque_plot)
             rep.addAction("Winding Plot — Induced Voltage (Back-EMF)",
                           self.do_backemf_plot)
             rep.addAction("Transient — Back-EMF vs Time", self.do_transient_emf)
             rep.addAction("Core Loss", self.do_core_loss)
+            if txt == "Results":
+                m.addAction("Edit Color Map…", self.edit_colormap)
+                m.addAction("Clean Up Solutions…", self.clean_up_solutions)
             m.addSeparator()
         m.addAction("Rename Project…", self.rename_project)
+        m.addAction("Insert Maxwell 2D Design", self.insert_design)
+        m.addAction("Copy Current Design", self.copy_design)
+        if data and data[0] == "design":
+            m.addAction("Set as Active Design", lambda: self.switch_design(data[1]))
         if data and data[0] == "mat":
             mat = data[1]
             m.addAction("View / Edit Material…", lambda: self.edit_material(mat))
@@ -1128,6 +1163,61 @@ class MainWindow(QMainWindow):
         self.design.add(new); self.view.reload(self.design.shapes)
         self.log(f"Subtracted → {new.name}"); self.refresh_trees()
 
+    def do_intersect(self):
+        from ..model import boolean_intersect
+        sel = self.view.selected_shapes()
+        if len(sel) < 2:
+            self.log("Intersect: 2개 이상 선택 필요"); return
+        self._snapshot()
+        new = boolean_intersect(sel, sel[0].name, material=sel[0].material,
+                                color=sel[0].color)
+        for s in sel:
+            self.design.remove(s)
+        self.design.add(new); self.view.reload(self.design.shapes)
+        self.log(f"Intersected {len(sel)} → {new.name}"); self.refresh_trees()
+
+    def do_split(self):
+        from .dialogs import SplitDialog
+        from ..model import split_by_line
+        sel = self.view.selected_shapes()
+        if not sel:
+            self.log("Split: 객체 선택 필요"); return
+        d = SplitDialog(self)
+        if not d.exec():
+            return
+        axis, pos = d.values()
+        self._snapshot(); nnew = 0
+        for s in list(sel):
+            p0, p1 = ((pos, -1e4), (pos, 1e4)) if axis == "X" else ((-1e4, pos), (1e4, pos))
+            pieces = split_by_line(s, p0, p1)
+            if len(pieces) > 1:
+                self.design.remove(s)
+                for pc in pieces:
+                    self.design.add(pc)
+                nnew += len(pieces)
+        self.view.reload(self.design.shapes)
+        self.log(f"Split → {nnew} pieces ({axis}={pos:g} mm)"); self.refresh_trees()
+
+    def do_chamfer(self):
+        from ..model import chamfer_corner
+        pk = self.view.picked
+        if not pk or pk.get("mode") != "vertex":
+            self.log("Chamfer: V키로 꼭짓점을 먼저 선택하세요."); return
+        shape = pk["shape"]
+        dist, ok = _QInputDialog.getDouble(self, "Chamfer", "Distance [mm]:",
+                                           1.0, 0.001, 1e4, 3)
+        if not ok:
+            return
+        self._snapshot()
+        new = chamfer_corner(shape, pk["x"], pk["y"], dist)
+        if shape in self.design.shapes:
+            self.design.shapes[self.design.shapes.index(shape)] = new
+        it = self.view.item_for(shape)
+        if it:
+            it.shape = new; it.rebuild()
+        self.view._clear_pick(); self.refresh_trees()
+        self.log(f"Chamfered {new.name} (d={dist:g} mm)")
+
     # ----------------------------------------------------------- v2 setup
     def assign_current(self):
         from .setup_dialogs import CurrentExcitationDialog
@@ -1188,8 +1278,231 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             d = dlg.values(); d["shapes"] = [s.name for s in sel]
             self.design.mesh_ops.append(d)
-            self.log(f"Mesh op '{d['name']}' max len {d['max_length']} mm")
+            self.log(f"Mesh op '{d['name']}' max len {d['max_length']} mm "
+                     f"(+{d.get('max_elems', 0)} elems max) → {len(sel)} obj")
             self.refresh_trees()
+
+    def _mesh_refinements(self):
+        """Flatten enabled mesh operations to {shape_name: max_length_mm} for the
+        Element-Length-Based refinement the mesher consumes (last op wins)."""
+        refs = {}
+        for op in self.design.mesh_ops:
+            if not op.get("enabled", True) or not op.get("restrict_length", True):
+                continue
+            L = op.get("max_length")
+            if not L:
+                continue
+            for nm in op.get("shapes", []):
+                refs[nm] = L
+        return refs
+
+    def _material_has_core_loss(self, mat_name):
+        """True if the object's material defines core-loss (Steinmetz) coeffs."""
+        m = self.project.materials.get(mat_name)
+        return bool(m and (m.kh > 0 or m.kc > 0 or m.ke > 0))
+
+    def assign_winding(self):
+        """Maxwell 'Add Winding': a phase winding driven by a current expression
+        (PhaseA/B/C default to Ia_max·sin(ωt) at 0/+120/−120°)."""
+        from .excitation_dialogs import WindingDialog
+        existing = [e for e in self.design.excitations if e.get("kind") == "winding"]
+        k = len(existing)
+        name = ["PhaseA", "PhaseB", "PhaseC"][k] if k < 3 else f"Phase{k + 1}"
+        shift = {0: "", 1: "+120deg", 2: "-120deg"}.get(k, "")
+        cur = f"Ia_max*sin(omega*time{shift})"
+        dlg = WindingDialog(name, cur, self)
+        if dlg.exec():
+            d = dlg.values(); d["kind"] = "winding"
+            d["shapes"] = [s.name for s in self.view.selected_shapes()]
+            self.design.excitations.append(d)
+            self.log(f"Winding '{d['name']}': {d['conductor']} I={d['current']} "
+                     f"(parallel branches={d['branches']})")
+            self.refresh_trees()
+
+    def assign_coil_excitation(self):
+        """Maxwell 'Coil Excitation' + 'Add Terminals': base name Ph_A / Re_Ph_A,
+        Zc conductors, ± polarity → one terminal per selected coil."""
+        from .excitation_dialogs import CoilExcitationDialog, AddTerminalsDialog
+        sel = self.view.selected_shapes()
+        if not sel:
+            self.log("Coil Excitation: 코일 객체 선택 필요"); return
+        dlg = CoilExcitationDialog("Ph_A", "Zc", self)
+        if not dlg.exec():
+            return
+        cv = dlg.values()
+        prefix = cv["base_name"] if cv["polarity"] != "Negative" else f"Re_{cv['base_name']}"
+        terms = [f"{prefix}_{i + 1}" for i in range(len(sel))]
+        tdlg = AddTerminalsDialog(terms, cv["conductors"], self)
+        if tdlg.exec():
+            chosen = tdlg.values() or terms
+            for i, nm in enumerate(chosen):
+                self.design.excitations.append(
+                    {"name": nm, "kind": "coil", "type": "Coil",
+                     "conductors": cv["conductors"], "polarity": cv["polarity"],
+                     "shapes": [sel[min(i, len(sel) - 1)].name]})
+            self.log(f"Coil Excitation '{cv['base_name']}' ({cv['polarity']}): "
+                     f"{len(chosen)} terminal(s), Zc={cv['conductors']}")
+            self.refresh_trees()
+
+    def set_eddy_effects(self):
+        """Maxwell 'Set Eddy Effects': tick the objects carrying eddy currents
+        (default: magnets ON, steel/coils OFF)."""
+        from .setup_dialogs import SetEddyEffectDialog
+        names = [s.name for s in self.design.shapes]
+        pre = self.design.eddy_objects or [
+            s.name for s in self.design.shapes
+            if getattr(self.project.materials.get(s.material), "is_magnet", False)]
+        dlg = SetEddyEffectDialog(names, pre, self)
+        if dlg.exec():
+            self.design.eddy_objects = dlg.values()
+            self.log(f"Set Eddy Effects: {len(self.design.eddy_objects)} object(s) ON "
+                     f"({', '.join(self.design.eddy_objects) or '없음'})")
+
+    def set_core_loss(self):
+        """Maxwell 'Set Core Loss': tick the steel objects to compute core loss on
+        (only effective where the material defines core-loss coefficients)."""
+        from .excitation_dialogs import SetCoreLossDialog
+        names = [s.name for s in self.design.shapes]
+        defined = [s.name for s in self.design.shapes
+                   if self._material_has_core_loss(s.material)]
+        pre = self.design.core_loss_objects or defined
+        dlg = SetCoreLossDialog(names, pre, defined, self)
+        if dlg.exec():
+            self.design.core_loss_objects = dlg.values()
+            self.log(f"Set Core Loss: {len(self.design.core_loss_objects)} object(s) ON "
+                     f"(재질 정의됨: {', '.join(defined) or '없음'})")
+
+    def new_report_trace(self):
+        """Maxwell 'Report: New Report - New Trace(s)' builder: pick Category →
+        Quantity → Function, then route to the matching transient plot."""
+        from .analysis_dialogs import ReportTraceDialog
+        sol = (f"{self.design.setup['name']} : {self.design.solver}"
+               if self.design.setup else f"Setup1 : {self.design.solver}")
+        dlg = ReportTraceDialog([sol], self)
+        if not dlg.exec():
+            return
+        v = dlg.values(); q = v.get("quantity") or ""; cat = v.get("category") or ""
+        if "LoadTorque" in q:
+            self.do_load_torque_plot()
+        elif "Torque" in q or cat == "Torque":
+            self.do_torque_plot()
+        elif cat == "Winding" or "InducedVoltage" in q or "FluxLinkage" in q:
+            self.do_backemf_plot()
+        elif cat == "Loss" or "Loss" in q:
+            self.do_core_loss()
+        else:
+            self.log(f"New Trace: {cat} / {q} — 해당 플롯 매핑 없음"); return
+        self.log(f"New Trace: {v['solution']} · {cat} → {q} [{v['function']}]")
+
+    def clean_up_solutions(self):
+        """Maxwell 'Clean Up Solutions': drop cached fields/meshes by scope."""
+        from .analysis_dialogs import CleanUpSolutionsDialog
+        dlg = CleanUpSolutionsDialog(self)
+        if not dlg.exec():
+            return
+        v = dlg.values(); scope = v["solutions"]
+        if scope in ("Fields Only", "Fields and Meshes", "All Solutions"):
+            self.design.field = None
+            self.view.set_field(None)
+            if hasattr(self, "btn_field"):
+                self.btn_field.setChecked(False)
+        if scope in ("Fields and Meshes", "All Solutions"):
+            self.design.mesh = None
+            self.view.set_mesh(None)
+        self.log(f"Clean Up Solutions: {scope} / {v['variations']} — 삭제 완료")
+        self.refresh_trees()
+
+    def edit_colormap(self):
+        """Maxwell field-legend colormap editor (double-click the B[mTesla] legend)."""
+        from .analysis_dialogs import ColormapDialog
+        vmax = (self.design.field.bmax * 1000.0
+                if self.design.field is not None else 2354.657)
+        dlg = ColormapDialog(0.0, vmax, 10, "mTesla", self)
+        if dlg.exec():
+            v = dlg.values()
+            self.log(f"Color Map: {v['type']}/{v['spectrum']}, {v['divisions']} div, "
+                     f"{'Log' if v['log'] else 'Linear'} [{v['units']}]")
+
+    def do_field_plot(self, quantity="Mag_B"):
+        """Maxwell 'Create Field Plot' (Fields ▸ B ▸ Mag_B): pick quantity + bodies."""
+        from .setup_dialogs import CreateFieldPlotDialog
+        names = [s.name for s in self.design.shapes]
+        if not names:
+            self.log("Create Field Plot: 형상이 없습니다."); return
+        dlg = CreateFieldPlotDialog(names, "Mag_B1", self)
+        i = dlg.quantity.findText(quantity)
+        if i >= 0:
+            dlg.quantity.setCurrentIndex(i)
+        if dlg.exec():
+            v = dlg.values()
+            self.design.field_plots.append(v)
+            if self.design.field is None:
+                self.do_analyze()
+            else:
+                self.view.set_field(self.design.field)
+                self.btn_field.setChecked(True)
+            self.log(f"Field Plot '{v['name']}': {v['quantity']} on "
+                     f"{len(v['objects'])} object(s)")
+            self.refresh_trees()
+
+    # ----------------------------------------------------- designs / view ctx
+    def _reload_active_design(self):
+        """Sync the canvas + panels to whatever design is now active."""
+        self.view.reload(self.design.shapes)
+        self.view.set_field(self.design.field if self.design.field else None)
+        self.view.set_mesh(self.design.mesh if self.design.mesh else None)
+        self.view.fit()
+        self._update_title()
+        if hasattr(self, "hdr_title"):
+            self.hdr_title.setText(f"{self.project.name}  ›  {self.design.name}")
+        self.refresh_trees()
+
+    def switch_design(self, idx):
+        """Make design `idx` active (Maxwell: double-click a design in the tree)."""
+        if not (0 <= idx < len(self.project.designs)) \
+                or idx == self.project.active_index:
+            return
+        self.project.active_index = idx
+        self._reload_active_design()
+        self.log(f"Active design → {self.design.name}")
+
+    def insert_design(self):
+        """Maxwell 'Insert Maxwell 2D Design': a fresh empty Transient design."""
+        from ..model.project import Design
+        n = len(self.project.designs) + 1
+        self.project.add_design(Design(name=f"BasicModel_{n}", solver="Transient"))
+        self._reload_active_design()
+        self.log(f"Inserted design '{self.design.name}' (active)")
+
+    def copy_design(self):
+        """Maxwell 'Copy Design': deep-duplicate the active design."""
+        base = self.design.name
+        d = self.project.copy_active(f"{base}_Copy")
+        self._reload_active_design()
+        self.log(f"Copied '{base}' → '{d.name}' (active)")
+
+    def set_view_context(self):
+        """Maxwell 'Set View Context' (double-click the Time= overlay): pick the
+        solved time instant and toggle the Speed/Position labels."""
+        from .analysis_dialogs import SetViewContextDialog
+        sol = (f"{self.design.setup['name']} : {self.design.solver}"
+               if self.design.setup else f"Setup1 : {self.design.solver}")
+        ms = self.view.motion_state
+        dlg = SetViewContextDialog([sol], time=ms.get("time", -1),
+                                   show_speed_pos=ms.get("speed") is not None,
+                                   parent=self)
+        if not dlg.exec():
+            return
+        v = dlg.values()
+        ms["time"] = v["time"]
+        if v["show_speed_pos"] and self.design.motion:
+            ms["speed"] = f"{self.design.motion.get('speed', 0):.0f}rpm"
+            ms["position"] = f"{self.design.motion.get('init_pos', 0):.1f}deg"
+        else:
+            ms["speed"] = None; ms["position"] = None
+        self.view.viewport().update()
+        self.log(f"Set View Context: {v['solution']} @ Time={v['time']} "
+                 f"({'speed/pos 표시' if v['show_speed_pos'] else 'Time만'})")
 
     def do_analyze(self):
         """Run the 2D magnetostatic FEM solve and show the B-field overlay."""
@@ -1487,24 +1800,34 @@ class MainWindow(QMainWindow):
         dlg = SolveSetupDialog(self.design.solver, self.design.setup, self)
         if dlg.exec():
             self.design.setup = dlg.values()
-            sf = "single@%gns" % self.design.setup.get("save_time_ns", 0.0)
+            sf = self.design.setup.get("save_fields", {})
+            sftxt = sf.get("mode", "None")
+            if sftxt == "Custom":
+                sftxt = f"Custom/{sf.get('distribution', '')}"
             self.log(f"Solve Setup '{self.design.setup['name']}' "
-                     f"({self.design.solver}, Save Fields: {sf})")
+                     f"({self.design.solver}, Save Fields: {sftxt})")
             self.refresh_trees()
 
     def design_settings(self):
-        """Maxwell 2D Design Settings (symmetry multiplier) + Model Depth (L_stk)."""
-        from .setup_dialogs import DesignSettingsDialog
-        depth = self.project.variables.value("L_stk", self.design.model_depth)
-        dlg = DesignSettingsDialog(self.design.symmetry_mult, depth, self)
+        """Maxwell 2D Design Settings: Material Thresholds + Symmetry Multiplier +
+        Model Settings (Model Depth=L_stk + optional Skew Model)."""
+        from .analysis_dialogs import DesignSettingsDialog
+        depth_expr = self.project.variables.exprs.get(
+            "L_stk", str(self.design.model_depth))
+        dlg = DesignSettingsDialog(self.design.symmetry_mult, depth_expr,
+                                   use_skew=self.design.use_skew, parent=self)
         if dlg.exec():
             v = dlg.values()
             self.design.symmetry_mult = v["symmetry_mult"]
-            self.design.model_depth = v["model_depth"]
             self.project.variables.set("L_stk", str(v["model_depth"]))
+            self.design.model_depth = self.project.variables.value(
+                "L_stk", self.design.model_depth)
+            self.design.use_skew = v["use_skew"]
             self.props.show_variables(self.project.variables.rows())
+            skew = (f", skew {v['skew_part']} {v['n_slices']}슬라이스 "
+                    f"{v['skew_angle']:g}°" if v["use_skew"] else "")
             self.log(f"Design Settings: symmetry ×{v['symmetry_mult']}, "
-                     f"model depth (L_stk) = {v['model_depth']:g} mm")
+                     f"L_stk={v['model_depth']} mm{skew}")
             self.refresh_trees()
 
     def do_cover_lines(self):
@@ -1688,13 +2011,15 @@ class MainWindow(QMainWindow):
             self.log("Mesh: 형상이 없습니다."); return
         try:
             t0 = time.perf_counter()
-            mesh = generate(self.design.shapes)
+            refs = self._mesh_refinements()
+            mesh = generate(self.design.shapes, refinements=refs or None)
             self.design.mesh = mesh
             self.view.set_mesh(mesh)
             self.btn_showmesh.setChecked(True)
             dt = (time.perf_counter() - t0) * 1e3
+            rtxt = f", {len(refs)} refinement(s)" if refs else ""
             self.log(f"Mesh generated: {mesh.n_nodes} nodes, "
-                     f"{mesh.n_tris} elements  ({dt:.0f} ms)")
+                     f"{mesh.n_tris} elements{rtxt}  ({dt:.0f} ms)")
             self.refresh_trees()
         except Exception as e:
             QMessageBox.warning(self, "Mesh error", str(e))

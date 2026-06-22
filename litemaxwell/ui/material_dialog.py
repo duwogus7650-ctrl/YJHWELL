@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
                              QFormLayout, QLabel, QLineEdit, QComboBox,
                              QTableWidget, QTableWidgetItem, QPushButton,
                              QGroupBox, QRadioButton, QCheckBox, QDialogButtonBox,
-                             QFileDialog, QWidget, QHeaderView)
+                             QFileDialog, QWidget, QHeaderView, QDoubleSpinBox)
 
 from ..model.materials import Material, BHCurve
 
@@ -106,6 +106,87 @@ class BHCurveDialog(QDialog):
         return BHCurve.from_rows(self.rows())
 
 
+class BPCurveDialog(QDialog):
+    """B-P (core-loss) curve editor.  Enter measured loss P[W/m^3] vs B[T] at a
+    test frequency, then 'Fit' least-squares the Bertotti coefficients
+    P = Kh*f*B^2 + Kc*(f*B)^2 + Ke*(f*B)^1.5 used by the core-loss solver."""
+
+    def __init__(self, material, parent=None):
+        super().__init__(parent)
+        self.m = material
+        self.setWindowTitle(f"B-P Curve (core loss) — {material.name}")
+        self.resize(560, 460)
+        root = QVBoxLayout(self)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Frequency"))
+        self.freq = QDoubleSpinBox(); self.freq.setRange(1, 1e6); self.freq.setValue(60)
+        self.freq.setSuffix(" Hz"); top.addWidget(self.freq); top.addStretch(1)
+        root.addLayout(top)
+        self.tbl = QTableWidget(0, 2)
+        self.tbl.setHorizontalHeaderLabels(["B [T]", "P [W/m^3]"])
+        self.tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        root.addWidget(self.tbl, 1)
+        # seed from current coefficients (or a blank few rows)
+        f0 = 60.0
+        seed = [(b, material.kh * f0 * b ** 2 + material.kc * (f0 * b) ** 2
+                 + material.ke * (f0 * b) ** 1.5) for b in (0.5, 1.0, 1.5, 1.8)]
+        if not (material.kh or material.kc or material.ke):
+            seed = [(0.5, 0.0), (1.0, 0.0), (1.5, 0.0), (1.8, 0.0)]
+        self._load(seed)
+        self.plot = pg.PlotWidget(background="#0c1830"); self.plot.setMaximumHeight(150)
+        self.plot.setLabel("bottom", "B [T]"); self.plot.setLabel("left", "P [W/m^3]")
+        root.addWidget(self.plot)
+        self.lbl = QLabel("Kh / Kc / Ke: (fit to compute)")
+        root.addWidget(self.lbl)
+        bar = QHBoxLayout()
+        for txt, fn in (("+ Row", lambda: self.tbl.insertRow(self.tbl.rowCount())),
+                        ("Fit Kh/Kc/Ke", self._fit)):
+            b = QPushButton(txt); b.clicked.connect(fn); bar.addWidget(b)
+        bar.addStretch(1)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        bar.addWidget(bb)
+        root.addLayout(bar)
+        self._kh = material.kh; self._kc = material.kc; self._ke = material.ke
+
+    def _load(self, rows):
+        self.tbl.setRowCount(0)
+        for b, p in rows:
+            r = self.tbl.rowCount(); self.tbl.insertRow(r)
+            self.tbl.setItem(r, 0, QTableWidgetItem(f"{b:g}"))
+            self.tbl.setItem(r, 1, QTableWidgetItem(f"{p:g}"))
+
+    def _points(self):
+        pts = []
+        for r in range(self.tbl.rowCount()):
+            try:
+                b = float(self.tbl.item(r, 0).text()); p = float(self.tbl.item(r, 1).text())
+                pts.append((b, p))
+            except (ValueError, AttributeError):
+                continue
+        return pts
+
+    def _fit(self):
+        pts = self._points()
+        if len(pts) < 3:
+            self.lbl.setText("최소 3점 필요"); return
+        f = self.freq.value()
+        B = np.array([p[0] for p in pts]); P = np.array([p[1] for p in pts])
+        A = np.column_stack([f * B ** 2, (f * B) ** 2, (f * B) ** 1.5])
+        coef, *_ = np.linalg.lstsq(A, P, rcond=None)
+        self._kh, self._kc, self._ke = (max(c, 0.0) for c in coef)
+        self.lbl.setText(f"Kh={self._kh:.4g}  Kc={self._kc:.4g}  Ke={self._ke:.4g}")
+        self.plot.clear()
+        self.plot.plot(B, P, pen=None, symbol="o", symbolBrush="#2bd6ff")
+        Bf = np.linspace(B.min(), B.max(), 50)
+        Pf = self._kh * f * Bf ** 2 + self._kc * (f * Bf) ** 2 + self._ke * (f * Bf) ** 1.5
+        self.plot.plot(Bf, Pf, pen=pg.mkPen("#e6a23c", width=2))
+
+    def fitted(self):
+        return self._kh, self._kc, self._ke
+
+
 class ViewEditMaterialDialog(QDialog):
     def __init__(self, material: Material, parent=None):
         super().__init__(parent)
@@ -155,7 +236,7 @@ class ViewEditMaterialDialog(QDialog):
         root.addWidget(bb)
 
     # -- grid -----------------------------------------------------------
-    def _add(self, name, typ, value, units, editable=False, button=None):
+    def _add(self, name, typ, value, units, editable=False, button=None, cb=None):
         r = self.grid.rowCount(); self.grid.insertRow(r)
         for c, v in enumerate((name, typ, value, units)):
             it = QTableWidgetItem(str(v))
@@ -166,7 +247,7 @@ class ViewEditMaterialDialog(QDialog):
             self._val[name.strip(" -")] = r
         if button:
             b = QPushButton(button)
-            b.clicked.connect(self._edit_bh)
+            b.clicked.connect(cb or self._edit_bh)
             self.grid.setCellWidget(r, 2, b)
 
     def _build_grid(self):
@@ -194,6 +275,8 @@ class ViewEditMaterialDialog(QDialog):
             self._add("  - Y", "Simple", "2", "")
             self._add("  - Kdc", "Simple", "0", "")
             self._add("  - Equiv. Cut Depth", "Simple", "0.001", "meter")
+            self._add("  - B-P Curve", "Custom", "Edit & Fit…", "",
+                      button="B-P Curve…", cb=self._edit_bp)
         self._add("Mass Density", "Simple", f"{m.mass_density:g}", "kg/m^3",
                   editable=True)
         self._add("Composition", "", "Lamination" if clm == "Electrical Steel"
@@ -207,6 +290,15 @@ class ViewEditMaterialDialog(QDialog):
         dlg = BHCurveDialog(self.m.bh, self.m.name, self)
         if dlg.exec():
             self.m.bh = dlg.result_curve()
+
+    def _edit_bp(self):
+        dlg = BPCurveDialog(self.m, self)
+        if dlg.exec():
+            self.m.kh, self.m.kc, self.m.ke = dlg.fitted()
+            for nm, val in (("Kh", self.m.kh), ("Kc", self.m.kc), ("Ke", self.m.ke)):
+                r = self._val.get(nm)
+                if r is not None and self.grid.item(r, 2):
+                    self.grid.item(r, 2).setText(f"{val:g}")
 
     def _cell(self, name):
         r = self._val.get(name)

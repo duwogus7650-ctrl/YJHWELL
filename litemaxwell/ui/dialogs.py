@@ -492,6 +492,20 @@ class RelativeCSDialog(_Base):
                 self.ox.value(), self.oy.value(), self.rot.value())
 
 
+class SplitDialog(_Base):
+    """Split selected objects along a plane (Maxwell Split): X or Y line."""
+    def __init__(self, parent=None):
+        super().__init__("Split", parent)
+        self.axis = QComboBox(); self.axis.addItems(["X", "Y"])
+        self.pos = _spin(-1e4, 1e4, 3, 0.0)
+        self.form.addRow("Split plane (line ⟂)", self.axis)
+        self.form.addRow("Position [mm]", self.pos)
+        self._add_buttons()
+
+    def values(self):
+        return self.axis.currentText(), self.pos.value()
+
+
 class AroundAxisDialog(_Base):
     def __init__(self, parent=None):
         super().__init__("Duplicate Around Axis", parent)

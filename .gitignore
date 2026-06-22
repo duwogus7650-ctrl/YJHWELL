@@ -26,6 +26,7 @@ frames_v3/
 feedback/out/
 feedback/out_*/
 feedback/.fb_*/
+.feedback/
 
 # build artifacts
 build/

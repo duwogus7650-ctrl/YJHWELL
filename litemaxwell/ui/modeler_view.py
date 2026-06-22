@@ -144,6 +144,12 @@ class ModelerView(QGraphicsView):
         self._cs_items: list = []          # the CS triad graphics
         self._osnap = True                 # object snap to existing vertices
         self._snap_marker = None           # (x, y) of active snap, for the marker
+        # Time/Speed/Position overlay (Maxwell draws it at a screen corner;
+        # double-click it -> Set View Context). Default Time=-1 before solving.
+        self.motion_state = {"time": -1, "speed": None, "position": None}
+        self.show_time_overlay = True
+        self.on_view_context = None        # callback set by MainWindow
+        self._time_rect = None             # last drawn overlay rect (device px)
         # themeable colours (default dark)
         self.c_bg = CANVAS_BG
         self.c_grid = GRID
@@ -511,6 +517,12 @@ class ModelerView(QGraphicsView):
             super().mouseReleaseEvent(e)
 
     def mouseDoubleClickEvent(self, e):
+        # double-click the Time= overlay -> Set View Context
+        if (self.tool == "select" and self._time_rect is not None
+                and self.on_view_context is not None
+                and self._time_rect.contains(e.position())):
+            self.on_view_context()
+            return
         if self.tool == "polygon":
             self._finish_polygon()
         elif self.tool == "spline":
@@ -871,8 +883,36 @@ class ModelerView(QGraphicsView):
         painter.drawText(x + w + 4, y + h, "0.00")
         painter.restore()
 
+    def _draw_time_overlay(self, painter):
+        """Lower-left 'Time = / Speed = / Position =' box (device pixels).
+        Double-clicking it opens Set View Context."""
+        if not self.show_time_overlay:
+            self._time_rect = None
+            return
+        ms = self.motion_state
+        lines = [f"Time     = {ms.get('time')}"]
+        if ms.get("speed") is not None:
+            lines.append(f"Speed    = {ms['speed']}")
+        if ms.get("position") is not None:
+            lines.append(f"Position = {ms['position']}")
+        painter.save(); painter.resetTransform()
+        fnt = painter.font(); fnt.setFamily("Consolas"); fnt.setPointSize(8)
+        painter.setFont(fnt)
+        w = 168; h = 14 + 14 * len(lines)
+        x = 12; y = self.viewport().height() - h - 12
+        r = QRectF(x, y, w, h)
+        painter.setBrush(QBrush(QColor(20, 28, 44, 210)))
+        painter.setPen(QPen(QColor("#5a6b7b")))
+        painter.drawRect(r)
+        painter.setPen(QPen(QColor("#cfe0ee")))
+        for i, ln in enumerate(lines):
+            painter.drawText(int(x + 8), int(y + 16 + i * 14), ln)
+        painter.restore()
+        self._time_rect = r
+
     def drawForeground(self, painter: QPainter, rect: QRectF):
         super().drawForeground(painter, rect)
+        self._draw_time_overlay(painter)
         # B-field overlay — fill each triangle by |B| (jet colormap)
         if self.show_field and self.field is not None:
             f = self.field
