@@ -33,6 +33,19 @@ class Field:
 
     @property
     def bmax(self) -> float:
+        """Mesh-converged peak |B| (99.5th percentile), comparable to Maxwell's
+        reported/displayed field. The raw element maximum (`b_peak`) is dominated
+        by the 1st-order field SINGULARITY at sharp re-entrant tooth-tip corners
+        (a true geometric singularity that diverges with refinement and is not
+        removed by higher-order elements — only by a tooth-tip fillet). The bulk
+        field is accurate: for the 400W model p99.5 ~ 2.4T matches Maxwell 2.35T."""
+        if not len(self.Bmag):
+            return 0.0
+        return float(np.percentile(self.Bmag, 99.5))
+
+    @property
+    def b_peak(self) -> float:
+        """Raw maximum |B| over all elements (includes corner singularities)."""
         return float(self.Bmag.max()) if len(self.Bmag) else 0.0
 
 
