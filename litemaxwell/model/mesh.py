@@ -79,8 +79,16 @@ def generate(shapes: list[Shape], max_area: float | None = None,
     pts = np.vstack(verts)
     pts, inv = _dedup(pts)
     segs = np.array([(inv[a], inv[b]) for a, b in segs])
-    # drop degenerate / duplicate segments
+    # drop degenerate segments (a==b after vertex dedup)
     segs = segs[segs[:, 0] != segs[:, 1]]
+    # drop DUPLICATE constrained segments: a boundary shared by two adjacent
+    # regions (a conformal interface) is emitted once per region — Triangle then
+    # fails with "topological inconsistency after splitting a segment". Keep one
+    # copy of each undirected edge.
+    if len(segs):
+        key = np.sort(segs, axis=1)
+        _, first = np.unique(key, axis=0, return_index=True)
+        segs = segs[np.sort(first)]
 
     if max_area is None:
         minx = pts[:, 0].min(); maxx = pts[:, 0].max()
