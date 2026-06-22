@@ -19,13 +19,19 @@ _갱신: 2026-06-22 · 브랜치 `feat/modeling-fielddialogs` · PR #8_
 A-정식화 FEM 엔진 자체는 정상.
 
 **6단계 캠페인 (각 단계 verify harness 게이트):**
-1. [ ] **Stage 1 — 실제 400W 파라메트릭 형상 재구축** (D_ro=53.6, D_so=82.3, g=0.5, T_m=2.9, L_stk=28,
-   파라메트릭 티스 W_t=5.6/H_t=9.25/W_so=3, 자석 a_m=0.89 span + MagnetR=1.9 필렛, Zc=14, I_rms=8.2). ← **다음 작업**
-2. [ ] **Stage 2 — Arkkio 체적 토크법** (얇은 밴드 → 갭 환형 체적적분; 코깅 수렴).
-3. [ ] **Stage 3 — 권선 자속쇄교 정밀화** (기본파 cos 투영 → 실제 도체분포; back-EMF 크기 보정).
-4. [ ] **Stage 4 — 에어갭 레이어 메시 + 수렴 검증**.
+1. [x] **Stage 1 ✅ 실제 400W 형상 재구축** (commit b590f79). 전역 각도그리드 conformal 메시 +
+   코일 0.3mm inset(슬롯절연). 결과: 깨끗이 메시(37k tris/9s, q28), **back-EMF 4V→25V**.
+   메시 디버그 핵심: shapely boolean이 0도 spike 생성 → `set_precision(1e-6)` + 코일 inset로 해결.
+2. [x] **Stage 2 ✅ Arkkio 체적 토크법** (commit f8bc1a9). `_gap_bounds`+`torque_arkkio`(solver.py).
+   결과: **load 토크 +1.29 N·m (Maxwell 1.273의 1.5%)**, **코깅 183 mN·m 메시수렴**(이전 195→367).
+   부호=q축 모터링 양수 규약.
+3. [→] **Stage 3 (진행중) 권선 자속쇄교 정밀화** — back-EMF 25V→22V(현재 14% high), 파형 정밀화.
+4. [ ] **Stage 4 — 에어갭 레이어 메시 + 수렴 검증 + Bmax 코너 hot-spot(현재 4~6T 비물리)**.
 5. [ ] **Stage 5 — 2차요소(P2 삼각형)** 자기정자 조립.
 6. [ ] **Stage 6 — 진짜 transient time-stepping + 와전류(∂A/∂t) + 슬라이딩밴드 회전**.
+
+**현재 정확도 (Stage 1+2 후):** 토크 1.5% · back-EMF ~8-14% · 코깅 수렴 ✓ (8배 오차 → ~1.5%로 개선).
+디버그 스크립트 `tools/diag.py`(git 제외, foreground 실행+`tools/diag_out.txt` 읽기 패턴 — 백그라운드 출력 캡처가 불안정).
 
 **오라클(목표값):** 정격 평균토크 **1.273 N·m**(=400W/314.16rad/s), 상 back-EMF **~22V peak/16V rms**,
 B max **~2.354 T**, 무부하 코깅 pk-pk MagnetR 1.0→1.5mm 시 69→34 mN·m. FEMM 교차검증 병행.
