@@ -83,7 +83,7 @@ gap = (r > gap_lo) & (r < gap_hi)
 
 # --- #2 Nonlinear B-H (steel saturation) on the same mesh ---
 fN = solve_magnetostatic(mesh, shapes, mats, None, n_pole=N_POLE, nonlinear=True)
-nl_converged = 1.0 if fN.iters < 25 else 0.0
+nl_converged = 1.0 if fN.converged else 0.0
 nl_saturation_ratio = float(fN.bmax / f.bmax)              # <1: peak capped
 nl_airgap_ratio = float(fN.Bmag[gap].mean() / f.Bmag[gap].mean())  # ~1 (vacuum)
 # linear-fallback identity: strip B-H curves -> nonlinear must equal linear

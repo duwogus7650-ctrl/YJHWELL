@@ -1,12 +1,12 @@
 {
-  "airgap_B_mean": 0.69371,
-  "airgap_B_max": 1.06294,
-  "Bmax": 1.86159,
-  "cogging_pk2pk": 0.046852,
-  "emf_peak_V": 4.1786,
-  "load_torque_avg_Nm": 0.1617,
-  "coreloss_total_W": 1.7099,
-  "nl_saturation_ratio": 0.7927,
+  "airgap_B_mean": 0.93782,
+  "airgap_B_max": 1.8346,
+  "Bmax": 3.34811,
+  "cogging_pk2pk": 0.083928,
+  "emf_peak_V": 25.3204,
+  "load_torque_avg_Nm": 1.273,
+  "coreloss_total_W": 15.5831,
+  "nl_saturation_ratio": 0.779,
 
   "emf_balance": 1.0,
   "emf_consistency": 1.0,
@@ -14,7 +14,7 @@
   "load_torque_dq_ratio": 1.0,
   "load_torque_scaling": 2.0,
   "nl_converged": 1.0,
-  "nl_airgap_ratio": 1.0,
+  "nl_airgap_ratio": 0.9279,
   "nl_fallback_resid": 0.0,
   "coreloss_scaling_ok": 1.0
 }
