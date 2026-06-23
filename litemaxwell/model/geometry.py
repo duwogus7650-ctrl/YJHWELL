@@ -174,6 +174,56 @@ def fillet_corner(shape: "Shape", vx: float, vy: float, radius: float,
     return s
 
 
+def chamfer_corner(shape: "Shape", vx: float, vy: float, dist: float) -> "Shape":
+    """Chamfer (straight bevel) the polygon corner nearest (vx,vy)."""
+    polys = shape.polygons()
+    if not polys:
+        return shape
+    ring = list(polys[0].exterior.coords)[:-1]
+    n = len(ring)
+    if n < 3:
+        return shape
+    k = min(range(n), key=lambda i: (ring[i][0] - vx) ** 2 + (ring[i][1] - vy) ** 2)
+    A = np.array(ring[(k - 1) % n]); V = np.array(ring[k]); B = np.array(ring[(k + 1) % n])
+    u1 = A - V; u2 = B - V
+    l1 = np.hypot(*u1); l2 = np.hypot(*u2)
+    if l1 < 1e-9 or l2 < 1e-9:
+        return shape
+    d = min(dist, 0.49 * l1, 0.49 * l2)
+    t1 = V + u1 / l1 * d; t2 = V + u2 / l2 * d
+    new_ring = ring[:k] + [tuple(t1), tuple(t2)] + ring[k + 1:]
+    s = Shape(shape.name, Polygon(new_ring), material=shape.material, color=shape.color)
+    s.cmd = {"kind": "Chamfer", "base": shape.cmd, "vx": vx, "vy": vy, "dist": dist}
+    return s
+
+
+def split_by_line(shape: "Shape", p0, p1) -> list["Shape"]:
+    """Split a closed shape with the infinite line through p0->p1.  Returns the
+    resulting pieces as new Shapes (Maxwell Split along a plane)."""
+    from shapely.ops import split as _split
+    from shapely.geometry import LineString
+    if not shape.is_closed:
+        return [shape]
+    (x0, y0), (x1, y1) = p0, p1
+    dx, dy = x1 - x0, y1 - y0
+    L = math.hypot(dx, dy) or 1.0
+    dx, dy = dx / L * 1e4, dy / L * 1e4           # extend to "infinite"
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    cutter = LineString([(cx - dx, cy - dy), (cx + dx, cy + dy)])
+    try:
+        pieces = list(_split(shape.geom, cutter).geoms)
+    except Exception:
+        return [shape]
+    out = []
+    for i, g in enumerate(pieces):
+        if g.area < 1e-9:
+            continue
+        s = Shape(f"{shape.name}_{i + 1}", g, material=shape.material, color=shape.color)
+        s.cmd = {"kind": "Split", "base": shape.cmd, "piece": i}
+        out.append(s)
+    return out or [shape]
+
+
 # --- boolean operations --------------------------------------------------
 
 def _operand_cmd(s: "Shape") -> dict:

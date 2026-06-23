@@ -26,6 +26,7 @@ frames_v3/
 feedback/out/
 feedback/out_*/
 feedback/.fb_*/
+.feedback/
 
 # build artifacts
 build/
@@ -37,3 +38,11 @@ Thumbs.db
 .DS_Store
 .vscode/
 .idea/
+tools/diag_out.txt
+
+# scratch debug scripts
+tools/diag.py
+tools/diag_out.txt
+tools/diag_run.txt
+tools/sweep_out.txt
+tools/band_out.txt
