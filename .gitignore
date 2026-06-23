@@ -46,3 +46,4 @@ tools/diag_out.txt
 tools/diag_run.txt
 tools/sweep_out.txt
 tools/band_out.txt
+tools/*.txt
