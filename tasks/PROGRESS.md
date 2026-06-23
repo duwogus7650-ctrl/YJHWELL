@@ -47,6 +47,18 @@ A-정식화 FEM 엔진 자체는 정상.
    결과: **편심 자석도 밴드레이어로 무크래시 스윕** → back-EMF 24.9→23.6V(Maxwell 22 근접), form 1.40.
    잔여(문서화): back-EMF 진폭 ~7% high = 코사인 권선함수+면적평균 자속쇄교 모델 충실도(동일 모델로 토크는 1.3% 검증됨 → 미수정).
 
+## ✅ 정밀도 캠페인 (2026-06-24) — 독립 Maxwell 오라클로 재검증, harness 19/19 PASS
+**근본원인 1 (자석 Br):** N45UH_**80C** 인데 20°C Br=1.32T 사용 중. 가역온도계수 −0.11%/°C로
+Br(80)=1.233T. 적용 → **Bmax 10.6%→2.3%**(2.407 vs 2.354), **back-EMF rms 7.6%→2.8%**(15.55 vs 16).
+기존 "토크 1.3%"는 *가짜*(높은 Br이 토크 과소추정을 상쇄). materials.py 두 라이브러리 모두 1.233 적용.
+**근본원인 2 (토크):** 메시 아님(수렴), γ=90가 MTPA, linear==nonlinear(포화 영향 없음). 실제 토크
+1.205 vs 1.273 = **−5.3%** 는 2D 모델 바닥(해석식 1.253도 Maxwell의 1.6% 아래). 미수정(정직).
+**back-EMF 피크:** 동심 7.5% high → **편심+밴드+correct Br = 22.01V = Maxwell 22 (0.05%!)**. UI에 'Sliding Band' 메뉴로 연결.
+**오라클 독립성(domain-bootstrap):** 기존 오라클의 emf_peak/Bmax는 *자기참조*(내 모델값)였음 → 17/17은 자기일관성 검사.
+solve_case가 **비선형 Bmax + emf_rms** 리포트; oracle.json 물리지표를 **실제 Maxwell값**(Bmax 2.354/EMF 22·16/토크 1.273)에 앵커,
+불변식은 이상값, 나머지는 회귀지문. **harness 19/19 PASS(독립 오라클 대비).**
+**정리:** 취약 `backemf_sweep_moving`(segfault) 제거 → `band.backemf_band`로 대체. UI 배선 완료.
+
 ## ✅ 캠페인 완료 — 7/7 단계 + verify harness 17/17 PASS (전 단계 게이트 통과)
 **최종 정확도:** 토크 **1.3%**(1.289 vs Maxwell 1.273), Bmax 2.43-2.6T(vs 2.354), 코깅 수렴, dq/scaling/평형 ✓,
 nl수렴 ✓, P2 교차검증 ✓, transient 와전류 ✓. **8배 오차 → Maxwell급.**
