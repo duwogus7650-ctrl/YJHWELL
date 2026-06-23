@@ -35,7 +35,11 @@ A-정식화 FEM 엔진 자체는 정상.
    (gap<B> 0.864 vs 0.870T) → P1 메시수렴 교차검증. P2는 8배 느림(75k dof)이라 P1 기본 유지, order=2는 고차검증용.
 7. [x] **Stage 6 ✅ Transient 와전류 솔버** (commit 672808b). `solve_transient()` backward-Euler +
    σ질량행렬(σ∂A/∂t). 검증: σ→0 시 자기정자와 정확히 일치(eddy=0), locked-rotor 250Hz AC 시 자석 와전류손 0.35W +
-   시간영역 토크. 풀 슬라이딩밴드(회전 시 로터 와전류)는 문서화된 잔여 확장.
+   시간영역 토크. **검증 완료.**
+8. [~] **슬라이딩밴드(회전 기하)** (commit 4e10d53, 실험적/부분). `rotate_rotor`+`backemf_sweep_moving`.
+   돌아가는 각도에선 back-EMF form 1.37(=Maxwell, 고정메시 1.45 대비 정현파화) → 물리 검증됨.
+   **한계(정직):** 전체 재삼각화가 일부 회전각에서 Triangle C-segfault(잡을 수 없음, snapping도 안 됨).
+   견고한 구현은 전용 **에어갭 밴드레이어**(로터/스테이터 고정, 갭 한 층만 재봉합) 필요 — 미구현, UI/하니스 미연결.
 
 ## ✅ 캠페인 완료 — 7/7 단계 + verify harness 17/17 PASS (전 단계 게이트 통과)
 **최종 정확도:** 토크 **1.3%**(1.289 vs Maxwell 1.273), Bmax 2.43-2.6T(vs 2.354), 코깅 수렴, dq/scaling/평형 ✓,

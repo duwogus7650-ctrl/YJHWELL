@@ -44,3 +44,4 @@ tools/diag_out.txt
 tools/diag.py
 tools/diag_out.txt
 tools/diag_run.txt
+tools/sweep_out.txt
