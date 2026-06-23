@@ -1,8 +1,8 @@
 """Air-gap BAND LAYER for robust sliding-band rotor motion.
 
-The fragile route (litemaxwell.model.solver.backemf_sweep_moving) re-triangulates
-the WHOLE cross-section at every rotor angle, which makes Triangle hard-crash at
-some angles. The robust, standard motor-FE technique implemented here instead:
+The fragile route (re-triangulating the WHOLE cross-section at every rotor angle)
+makes Triangle hard-crash at some angles, so it was removed. The robust, standard
+motor-FE technique implemented here instead:
 
   * meshes the ROTOR side (everything inside radius r_rb) ONCE,
   * meshes the STATOR side (everything outside r_sb) ONCE,
@@ -156,8 +156,8 @@ def backemf_band(shapes, materials, n_pole=10, n_steps=25, L_stk_m=0.028,
                  progress=None):
     """Robust sliding-band no-load back-EMF: rotor & stator meshed ONCE, only the
     rotor nodes rotate and the gap band re-stitches each angle. Crash-free at all
-    angles (unlike solver.backemf_sweep_moving) and matches the fixed-mesh field
-    to <1%. Returns (angles_deg, emf{A,B,C}[V], lam{A,B,C}[Wb]).
+    angles (unlike a full-remesh sweep) and matches the fixed-mesh field to <1%.
+    Returns (angles_deg, emf{A,B,C}[V], lam{A,B,C}[Wb]).
 
     Works with both build_motor() and build_motor(eccentric=True); the eccentric
     bread-loaf de-peaks the EMF (peak 24.9 -> 23.6, toward Maxwell ~22) while
