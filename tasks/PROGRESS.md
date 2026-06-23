@@ -36,10 +36,12 @@ A-정식화 FEM 엔진 자체는 정상.
 7. [x] **Stage 6 ✅ Transient 와전류 솔버** (commit 672808b). `solve_transient()` backward-Euler +
    σ질량행렬(σ∂A/∂t). 검증: σ→0 시 자기정자와 정확히 일치(eddy=0), locked-rotor 250Hz AC 시 자석 와전류손 0.35W +
    시간영역 토크. **검증 완료.**
-8. [~] **슬라이딩밴드(회전 기하)** (commit 4e10d53, 실험적/부분). `rotate_rotor`+`backemf_sweep_moving`.
-   돌아가는 각도에선 back-EMF form 1.37(=Maxwell, 고정메시 1.45 대비 정현파화) → 물리 검증됨.
-   **한계(정직):** 전체 재삼각화가 일부 회전각에서 Triangle C-segfault(잡을 수 없음, snapping도 안 됨).
-   견고한 구현은 전용 **에어갭 밴드레이어**(로터/스테이터 고정, 갭 한 층만 재봉합) 필요 — 미구현, UI/하니스 미연결.
+8. [x] **에어갭 밴드레이어 ✅ 견고한 슬라이딩밴드** (commit 7c28f04, `band.py`). 로터/스테이터 1회 메시,
+   각도마다 로터노드만 강체회전 + 갭 환형 한 층만 재봉합(두 깨끗한 노드링 사이 → 어느 각도서도 안전 삼각화).
+   **전 각도 crash-free**(전체재삼각화 `backemf_sweep_moving`의 segfault 해결). 검증: 고정메시와 <1% 일치
+   (bmax 3.316 vs 3.348, 자속쇄교 −0.01603 vs −0.01602), back-EMF form 1.40(≈Maxwell 1.375). `backemf_band()` 래퍼.
+   디버그 중 버그 발견·수정: generate()가 환형 중앙 구멍을 안 비워 스테이터가 로터와 겹쳐 場 단락(면적 8156 vs 5849)
+   → 중앙(센트로이드 r<r_sb) 삼각형 제거+노드 압축. **잔여:** 편심 자석은 로터측 메시에서 예각코너로 Triangle 간헐 크래시(별도 기하항목, 동심으로는 완전동작).
 
 ## ✅ 캠페인 완료 — 7/7 단계 + verify harness 17/17 PASS (전 단계 게이트 통과)
 **최종 정확도:** 토크 **1.3%**(1.289 vs Maxwell 1.273), Bmax 2.43-2.6T(vs 2.354), 코깅 수렴, dq/scaling/평형 ✓,
