@@ -259,6 +259,155 @@ def solve_magnetostatic(mesh, shapes, materials, excitations=None,
                  converged=converged)
 
 
+def solve_transient(mesh, shapes, materials, dt, n_steps, n_pole=10,
+                    base_rpm=0.0, currents_fn=None, theta0_deg=0.0,
+                    turns=14, L_stk_m=0.028, progress=None):
+    """Backward-Euler transient magnetodynamic solve WITH eddy currents.
+
+        (M/dt + K) A^{n+1} = b^{n+1} + (M/dt) A^n,   M = integral sigma Ni Nj dA
+
+    The mass matrix M adds the eddy term sigma*dA/dt: eddy currents
+    Je = -sigma dA/dt flow in SOLID conductors (the magnets, sigma~6.7e5 S/m),
+    dissipating ∫ sigma (dA/dt)^2 dV. Laminated steel and stranded coils carry no
+    bulk axial eddy current here (sigma=0 — their loss is the separate
+    Steinmetz/copper model). base_rpm spins the magnetisation pattern at constant
+    speed; currents_fn(t)->{'A','B','C'} drives the windings (None = no-load).
+    In the sigma->0 limit each step reduces to the magnetostatic solve.
+    Returns {t, torque[N*m], eddy_loss_W, lam{A,B,C}, emf{A,B,C}}.
+    """
+    nodes = np.asarray(mesh.nodes, float) * 1e-3
+    tris = np.asarray(mesh.triangles, int)
+    N = len(nodes); M = len(tris)
+    P = nodes[tris]; p0, p1, p2 = P[:, 0], P[:, 1], P[:, 2]
+    bx = np.stack([p1[:, 1] - p2[:, 1], p2[:, 1] - p0[:, 1],
+                   p0[:, 1] - p1[:, 1]], axis=1)
+    cx = np.stack([p2[:, 0] - p1[:, 0], p0[:, 0] - p2[:, 0],
+                   p1[:, 0] - p0[:, 0]], axis=1)
+    twoA = ((p1[:, 0] - p0[:, 0]) * (p2[:, 1] - p0[:, 1])
+            - (p2[:, 0] - p0[:, 0]) * (p1[:, 1] - p0[:, 1]))
+    A = 0.5 * np.abs(twoA); A = np.where(A < 1e-15, 1e-15, A)
+    cents = P.mean(axis=1)
+    r = np.hypot(cents[:, 0], cents[:, 1])
+    ang0 = np.arctan2(cents[:, 1], cents[:, 0])
+
+    ns = len(shapes)
+    mur_s = np.ones(ns); ismag_s = np.zeros(ns, bool)
+    br_s = np.zeros(ns); sig_s = np.zeros(ns)
+    for i, s in enumerate(shapes):
+        mat = materials.get(s.material)
+        if mat:
+            mur_s[i] = mat.mu_r if mat.mu_r > 0 else 1.0
+            ismag_s[i] = bool(getattr(mat, "is_magnet", False))
+            br_s[i] = mat.br
+            if ismag_s[i]:                       # only solid magnets -> bulk eddy
+                sig_s[i] = getattr(mat, "conductivity", 0.0)
+    tag = np.asarray(mesh.tri_shape, int); valid = tag >= 0
+    cl = np.clip(tag, 0, ns - 1)
+    mur0 = np.where(valid, mur_s[cl], 1.0)
+    sig_e = np.where(valid, sig_s[cl], 0.0)
+    ismag_e = np.where(valid, ismag_s[cl], False)
+    br_e = np.where(valid, br_s[cl], 0.0)
+    nu = 1.0 / (MU0 * mur0)
+
+    ri = np.repeat(tris, 3, axis=1).reshape(M, 3, 3)
+    ci = np.tile(tris, 3).reshape(M, 3, 3)
+    ke = (nu / (4.0 * A))[:, None, None] * (bx[:, :, None] * bx[:, None, :]
+                                            + cx[:, :, None] * cx[:, None, :])
+    K = sp.coo_matrix((ke.ravel(), (ri.ravel(), ci.ravel())),
+                      shape=(N, N)).tocsr()
+    Mvec = np.zeros(N)
+    np.add.at(Mvec, tris, (sig_e * A / 3.0)[:, None])    # lumped sigma mass
+
+    bnd = _boundary_nodes(tris); free = np.ones(N, bool)
+    if bnd:
+        free[np.fromiter(bnd, int)] = False
+    fidx = np.where(free)[0]
+    Sff = (K + sp.diags(Mvec / dt)).tocsc()[fidx][:, fidx]
+    solve = spla.factorized(Sff)                 # constant system -> factor once
+
+    pmap = phase_map(shapes, n_pole)
+    idxname = {s.name: i for i, s in enumerate(shapes)}
+    wm = base_rpm * 2 * math.pi / 60.0
+    gb = _gap_bounds(shapes, materials)
+
+    def mag_source(rot):
+        a = np.mod(ang0 - rot, 2 * np.pi)
+        pole = (a / (2 * np.pi / max(n_pole, 1))).astype(int)
+        pol = np.where(pole % 2 == 0, 1.0, -1.0)
+        safe = (r > 1e-9) & ismag_e
+        rr = np.where(r > 0, r, 1.0)
+        return (np.where(safe, pol * br_e * cents[:, 0] / rr, 0.0),
+                np.where(safe, pol * br_e * cents[:, 1] / rr, 0.0))
+
+    # initialise Az to the steady (magnetostatic) field at t=0, otherwise the
+    # first step would dump a huge spurious dA/dt (Az: 0 -> full field in one dt)
+    # and a nonphysical turn-on eddy loss.
+    Kff = K[fidx][:, fidx].tocsc()
+    rhs0 = np.zeros(N)
+    Brx0, Bry0 = mag_source(math.radians(theta0_deg))
+    np.add.at(rhs0, tris,
+              (nu / 2.0)[:, None] * (Brx0[:, None] * cx - Bry0[:, None] * bx))
+    if currents_fn:
+        i0 = currents_fn(0.0); c0 = {}
+        for ph, coils in pmap.items():
+            for si, wgt in coils:
+                c0[si] = c0.get(si, 0.0) + turns * wgt * i0[ph]
+        Jz0 = np.zeros(M)
+        for si, at in c0.items():
+            Jz0[tag == si] = at / (max(shapes[si].area, 1e-9) * 1e-6)
+        if Jz0.any():
+            np.add.at(rhs0, tris, (Jz0 * A / 3.0)[:, None])
+    Az = np.zeros(N)
+    Az[fidx] = spla.spsolve(Kff, rhs0[fidx])
+    Mdt = Mvec / dt
+    res = {"t": [], "torque": [], "eddy_loss_W": [],
+           "lam": {"A": [], "B": [], "C": []}}
+    for n in range(n_steps):
+        t = n * dt
+        rot = math.radians(theta0_deg) + wm * t
+        Brx, Bry = mag_source(rot)
+        rhs = Mdt * Az                            # (M/dt) A^n
+        np.add.at(rhs, tris,
+                  (nu / 2.0)[:, None] * (Brx[:, None] * cx - Bry[:, None] * bx))
+        if currents_fn:
+            iabc = currents_fn(t)
+            camp = {}
+            for ph, coils in pmap.items():
+                for si, wgt in coils:
+                    camp[si] = camp.get(si, 0.0) + turns * wgt * iabc[ph]
+            Jz = np.zeros(M)
+            for si, amp_turns in camp.items():
+                area_m2 = max(shapes[si].area, 1e-9) * 1e-6
+                Jz[tag == si] = amp_turns / area_m2
+            if Jz.any():
+                np.add.at(rhs, tris, (Jz * A / 3.0)[:, None])
+        Az_new = np.zeros(N)
+        Az_new[fidx] = solve(rhs[fidx])
+        # eddy loss P = ∫ sigma (dA/dt)^2 dV  (dA/dt = element-mean node rate)
+        dAdt = (Az_new[tris].mean(axis=1) - Az[tris].mean(axis=1)) / dt
+        eddy = float((sig_e * dAdt ** 2 * A).sum() * L_stk_m)
+        Az = Az_new
+        Bx = (Az[tris] * cx).sum(axis=1) / twoA
+        By = -(Az[tris] * bx).sum(axis=1) / twoA
+        fld = Field(np.asarray(mesh.nodes, float), tris,
+                    Az, np.stack([Bx, By], axis=1), np.hypot(Bx, By))
+        tq = (torque_arkkio(fld, gb[0], gb[1], L_stk_m) if gb else 0.0)
+        lk = flux_linkage(Az, mesh, pmap, L_stk_m, turns)
+        res["t"].append(t); res["torque"].append(tq); res["eddy_loss_W"].append(eddy)
+        for ph in "ABC":
+            res["lam"][ph].append(lk[ph])
+        if progress:
+            progress(n + 1, n_steps)
+
+    res = {k: (np.asarray(v) if k != "lam" else
+               {p: np.asarray(res["lam"][p]) for p in "ABC"})
+           for k, v in res.items()}
+    tt = res["t"]
+    res["emf"] = {p: -np.gradient(res["lam"][p], tt) if len(tt) > 1
+                  else np.zeros_like(tt) for p in "ABC"}
+    return res
+
+
 def torque_stress(field, r_gap_mm, L_stk_m, dr_mm=1.2):
     """Torque on the rotor via the Maxwell stress tensor over a gap annulus.
     T = (L/μ0) * (1/2dr) * Σ r·Br·Bθ·A_elem  [N·m]."""
