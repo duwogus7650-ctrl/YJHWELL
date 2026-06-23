@@ -87,9 +87,13 @@ def system_library() -> list[tuple[str, str, str, "Material"]]:
                   conductivity=4.7092391e7, mass_density=8933)
     items.append((cu.name, "SysLibrary", "Granta Materials Data for Simulation", cu))
 
+    # Br at 80degC: N45UH 20degC remanence ~1.32T, reversible temp-coeff
+    # alpha_Br ~ -0.11%/degC, so Br(80) = 1.32*(1 - 0.0011*60) ~ 1.233 T. Using
+    # the 80degC value (the material is the _80C grade) is what brings Bmax and
+    # back-EMF onto the Maxwell oracle (2.354 T / 16 V rms); 1.32 over-fluxes ~7%.
     mag = Material("Arnold_Magnetics_N45UH_80C", color="#c0392b", mu_r=1.05,
                    conductivity=6.7e5, mass_density=7500, is_magnet=True,
-                   br=1.32, hc=1.0474e6)
+                   br=1.233, hc=1.0474e6)
     mag.bh = BHCurve.from_rows([(-1.35e6, -1.7558), (-1.0e6, -0.50),
                                 (-0.5e6, 0.30), (0.0, 1.25)])
     items.append((mag.name, "SysLibrary", "ArnoldMagnetics", mag))
@@ -132,8 +136,10 @@ def default_library() -> dict[str, Material]:
         (60000, 2.1), (150000, 2.2),
     ])
     lib[steel.name] = steel
-    # NdFeB permanent magnet (N45UH-like)
+    # NdFeB permanent magnet (N45UH @ 80degC). Br=1.233 is the 80degC remanence
+    # (20degC 1.32T * (1 - 0.0011/degC * 60degC)); this is what matches the Maxwell
+    # Bmax 2.354 T and back-EMF 16 V rms oracle. See system_library() note.
     mag = Material("N45UH", color="#c0392b", mu_r=1.05, conductivity=6.7e5,
-                   mass_density=7500, is_magnet=True, br=1.32, hc=1.0e6)
+                   mass_density=7500, is_magnet=True, br=1.233, hc=1.0e6)
     lib[mag.name] = mag
     return lib
