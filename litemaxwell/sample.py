@@ -92,7 +92,11 @@ def _eccentric_magnet(r_in, r_arc, offset, phi_c_deg, half_deg):
     return Polygon(inner + outer[::-1])
 
 
-def build_motor(poles: int = 10, slots: int = 12) -> list[Shape]:
+def build_motor(poles: int = 10, slots: int = 12,
+                eccentric: bool = False) -> list[Shape]:
+    # eccentric=True uses the bread-loaf magnet (sinusoidalises the gap). It only
+    # helps when the rotor GEOMETRY actually rotates (the moving-band sweep), so
+    # the default fixed-mesh / rotated-magnetisation path stays concentric.
     # --- 400W 10P12S SPM spec (mm) ------------------------------------
     R_mag_out = 26.8                       # D_ro/2  (magnet outer = gap-facing)
     T_m       = 2.9
@@ -124,11 +128,10 @@ def build_motor(poles: int = 10, slots: int = 12) -> list[Shape]:
     pitch_m = 360.0 / poles
     for k in range(poles):
         c = pitch_m * (k + 0.5)
-        # Concentric magnet under the current fixed-mesh / rotated-magnetization
-        # sweep: the eccentric (_eccentric_magnet) bread-loaf only sinusoidalises
-        # the gap when the ROTOR GEOMETRY rotates, which arrives with the Stage-6
-        # sliding band. Until then concentric is the faithful model (torque 1.5%).
-        seg = _wedge(R_mag_in, R_mag_out, c - theta_one, c + theta_one)
+        if eccentric:
+            seg = _eccentric_magnet(R_mag_in, R_mag_arc, R_mag_off, c, theta_one)
+        else:
+            seg = _wedge(R_mag_in, R_mag_out, c - theta_one, c + theta_one)
         if seg.is_empty:
             continue
         color = "#c0392b" if k % 2 == 0 else "#2f5f8f"

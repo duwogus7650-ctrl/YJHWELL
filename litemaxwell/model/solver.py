@@ -583,6 +583,68 @@ def backemf_sweep(shapes, materials, n_pole=10, n_steps=37, L_stk_m=0.028,
     return angles, emf, lam
 
 
+def rotate_rotor(shapes, deg):
+    """Return `shapes` with the ROTATING parts (Rotor/Shaft/Magnet*) rotated by
+    `deg` about the axis; the stator, coils and region stay fixed. The rotor rim
+    and each magnet's inner arc rotate by the SAME affine map, so their shared
+    (conformal) boundary vertices stay coincident — the moving mesh re-meshes
+    cleanly. This is the sliding-band motion: a shaped (eccentric) magnet really
+    sweeps past the teeth, unlike the fixed-mesh rotated-magnetisation model."""
+    import shapely
+    from shapely.affinity import rotate as _rot
+    from .geometry import Shape
+    out = []
+    for s in shapes:
+        if s.name in ("Rotor", "Shaft") or s.name.startswith("Magnet"):
+            # snap the rotated geometry to a 1nm grid: rotation injects sub-1e-9
+            # coordinate noise that makes Triangle's exact-arithmetic segment
+            # intersection crash at the (shared) rotor-rim / magnet-inner-arc
+            # vertices. Snapping all rotor parts to the SAME grid merges the
+            # shared vertices cleanly and separates the rest -> robust re-mesh.
+            g = shapely.set_precision(_rot(s.geom, deg, origin=(0, 0)), 1e-6)
+            out.append(Shape(s.name, g, material=s.material, color=s.color))
+        else:
+            out.append(s)
+    return out
+
+
+def backemf_sweep_moving(shapes, materials, n_pole=10, n_steps=19, L_stk_m=0.028,
+                         turns=14, base_rpm=3000.0, mesh_area=8.0, progress=None):
+    """No-load back-EMF with the ROTOR GEOMETRY rotated and RE-MESHED at every
+    angle (moving geometry). Unlike backemf_sweep (which spins only the
+    magnetisation in a fixed mesh), this captures the true slot interaction and
+    magnet shaping: where it runs it gives the de-peaked, near-sinusoidal EMF
+    Maxwell produces (form factor ~1.37 vs ~1.45 for the fixed sweep).
+
+    EXPERIMENTAL — NOT robust at all angles. Full re-triangulation of the whole
+    cross-section at an arbitrary rotor angle makes Triangle's exact-arithmetic
+    segment intersection HARD-CRASH (C-level segfault, uncatchable) at certain
+    angles, for both concentric and eccentric magnets; `set_precision` snapping
+    does not cure it. The robust production technique is a dedicated air-gap BAND
+    LAYER (fixed rotor+stator meshes, only the single gap-band layer re-stitched
+    each step) — not implemented here. Use the fixed-mesh backemf_sweep for
+    reliable runs; this is opt-in research code (not wired into the UI/harness).
+    Returns (angles_deg, emf{A,B,C}[V], lam{A,B,C}[Wb])."""
+    from .mesh import generate
+    span = 720.0 / max(n_pole, 1)                     # one electrical period
+    angles = np.linspace(0.0, span, n_steps)
+    lam = {"A": np.zeros(n_steps), "B": np.zeros(n_steps), "C": np.zeros(n_steps)}
+    for i, th in enumerate(angles):
+        geo = rotate_rotor(shapes, th)                # rotate rotor geometry
+        mesh = generate(geo, max_area=mesh_area)      # re-mesh the moved geometry
+        pmap = phase_map(geo, n_pole)
+        f = solve_magnetostatic(mesh, geo, materials, None, n_pole=n_pole,
+                                rotor_angle_deg=th)
+        lk = flux_linkage(f.Az, mesh, pmap, L_stk_m, turns)
+        for ph in lam:
+            lam[ph][i] = lk[ph]
+        if progress:
+            progress(i + 1, n_steps)
+    wm = base_rpm * 2 * math.pi / 60.0
+    emf = {ph: -np.gradient(lam[ph], np.radians(angles)) * wm for ph in lam}
+    return angles, emf, lam
+
+
 def load_torque_sweep(shapes, materials, n_pole=10, n_steps=19, L_stk_m=0.028,
                       r_gap_mm=25.0, turns=14, i_peak=11.6, gamma_deg=0.0,
                       base_rpm=3000.0, mesh_area=12.0, progress=None, mesh=None):
