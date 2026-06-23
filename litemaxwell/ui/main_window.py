@@ -1050,6 +1050,8 @@ class MainWindow(QMainWindow):
             rep.addAction("Load Torque", self.do_load_torque_plot)
             rep.addAction("Winding Plot — Induced Voltage (Back-EMF)",
                           self.do_backemf_plot)
+            rep.addAction("Back-EMF — Sliding Band (high-fidelity)",
+                          self.do_backemf_band)
             rep.addAction("Transient — Back-EMF vs Time", self.do_transient_emf)
             rep.addAction("Core Loss", self.do_core_loss)
             if txt == "Results":
@@ -1628,6 +1630,48 @@ class MainWindow(QMainWindow):
                   ("InducedVoltage(PhaseC)", emf["C"])]
         ResultPlotDialog(ang, emf["A"], "Rotor position [deg]",
                          "Induced voltage [V]", "Winding Plot 1 (Back-EMF)",
+                         self, series=series).exec()
+
+    def do_backemf_band(self):
+        """High-fidelity back-EMF via the air-gap BAND LAYER (sliding band): the
+        rotor geometry actually rotates, capturing slot interaction + magnet
+        shaping -> Maxwell-matching waveform (peak 22.0 V vs Maxwell ~22 on the
+        400W sample). Slower than do_backemf_plot (re-stitches the gap per step)."""
+        from PyQt6.QtWidgets import QApplication
+        from ..model.band import backemf_band
+        from .results import ResultPlotDialog
+        v = self.project.variables
+        npole = int(v.value("N_pole", 10))
+        Lstk = v.value("L_stk", 28.0) * 1e-3
+        turns = int(v.value("Zc", 14))
+        rpm = v.value("BaseRPM", 3000.0)
+
+        def prog(i, n):
+            self.statusBar().showMessage(f"Sliding-band Back-EMF… {i}/{n}")
+            QApplication.processEvents()
+
+        self.log("Back-EMF (슬라이딩밴드 고정밀) 계산 중… 로터 기하 회전 + 갭 재봉합")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            ang, emf, _ = backemf_band(self.design.shapes, self.project.materials,
+                                       n_pole=npole, n_steps=25, L_stk_m=Lstk,
+                                       turns=turns, base_rpm=rpm, progress=prog)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Back-EMF (sliding band) error",
+                                f"{e}\n\n(밴드레이어는 400W급 Rotor/Stator/Magnet/"
+                                f"Winding 형상을 가정합니다.)"); return
+        QApplication.restoreOverrideCursor()
+        self.statusBar().clearMessage()
+        pk = max(float(abs(emf[p]).max()) for p in "ABC")
+        rms = max(float((emf[p] ** 2).mean() ** 0.5) for p in "ABC")
+        self.log(f"Back-EMF (sliding band): peak ≈ {pk:.3g} V, rms ≈ {rms:.3g} V "
+                 f"@ {rpm:g} rpm")
+        series = [("InducedVoltage(PhaseA)", emf["A"]),
+                  ("InducedVoltage(PhaseB)", emf["B"]),
+                  ("InducedVoltage(PhaseC)", emf["C"])]
+        ResultPlotDialog(ang, emf["A"], "Rotor position [deg]", "Induced voltage [V]",
+                         "Winding Plot (Back-EMF, Sliding Band)",
                          self, series=series).exec()
 
     def do_load_torque_plot(self):

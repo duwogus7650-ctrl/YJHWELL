@@ -112,10 +112,13 @@ def _fund(y):                                          # 1st-harmonic amplitude
 
 
 emf_peaks = {p: float(np.abs(emf[p]).max()) for p in "ABC"}
+emf_rmss = {p: float(np.sqrt(np.mean(np.asarray(emf[p][:-1], float) ** 2)))
+            for p in "ABC"}
 l1 = {p: _fund(lam[p]) for p in "ABC"}
 e1 = {p: _fund(emf[p]) for p in "ABC"}
 esum = emf["A"] + emf["B"] + emf["C"]
 emf_peak_V = float(np.mean(list(emf_peaks.values())))
+emf_rms_V = float(np.mean(list(emf_rmss.values())))
 emf_balance = float(min(emf_peaks.values()) / max(emf_peaks.values()))
 emf_consistency = float(np.mean([e1[p] / (we * l1[p]) for p in "ABC"]))
 emf_zero_sum = float(np.abs(esum).max() / max(emf_peaks.values()))
@@ -163,9 +166,11 @@ results = {
     # ---- regression baselines (THIS sample's fingerprint; not a universal target)
     "airgap_B_mean": round(float(f.Bmag[gap].mean()), 5),
     "airgap_B_max":  round(float(f.Bmag[gap].max()), 5),
-    "Bmax":          round(float(f.bmax), 5),
+    "Bmax":          round(float(fN.bmax), 5),   # NONLINEAR (Maxwell-comparable)
+    "Bmax_linear":   round(float(f.bmax), 5),    # linear (unsaturated) reference
     "cogging_pk2pk": round(float(tq.max() - tq.min()), 6),
     "emf_peak_V":    round(emf_peak_V, 4),
+    "emf_rms_V":     round(emf_rms_V, 4),
     "load_torque_avg_Nm": round(load_torque_avg_Nm, 4),
     "coreloss_total_W":   round(coreloss_total_W, 4),
     # ---- design-agnostic PHYSICS oracles (must hold for any motor) -------------
